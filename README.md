@@ -30,11 +30,11 @@ If you don't already have one, you can sign up for a free account at https://ipi
 
 ### Resources   
 
-No custom resources are included
+_No custom resources are included_
 
 ### Prompts
 
-No custom prompts are included
+_No custom prompts are included_
 
 
 ## License
