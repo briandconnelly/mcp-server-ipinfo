@@ -3,6 +3,9 @@
 This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
 This information can provide information about where the user is located and the network that they are using.
 
+![Example conversation using mcp-server-ipinfo](demo.png)
+
+
 ## Installation
 
 You'll need to create a token to use the IPInfo API.
@@ -12,13 +15,18 @@ If you don't already have one, you can sign up for a free account at https://ipi
 {
     "ipinfo": {
         "command": "uvx",
-        "args": ["--from", "git+https://github.com/briandconnelly/mcp-server-ipinfo.git", "mcp-server-ipinfo"],
+        "args": [
+            "--from",
+            "git+https://github.com/briandconnelly/mcp-server-ipinfo.git",
+            "mcp-server-ipinfo"
+        ],
         "env": {
             "IPINFO_API_TOKEN": "<YOUR TOKEN HERE>"
         }
     }
 }
 ```
+
 
 ## Components
 
