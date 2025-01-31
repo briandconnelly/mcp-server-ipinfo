@@ -13,7 +13,7 @@ class IPDetails(BaseModel):
     ip: IPvAnyAddress = None  # type: ignore
     """The IP address (supports both IPv4 and IPv6 formats)"""
 
-    hostname: HttpUrl | None = None
+    hostname: str | None = None
     """The hostname associated with the IP address, if available"""
 
     city: str | None = None
