@@ -12,7 +12,7 @@ If you don't already have one, you can sign up for a free account at https://ipi
 {
     "ipinfo": {
         "command": "uvx",
-        "args": ["--from", "git+https://github.com/briandconnelly/mcp-server-ipinfo", "mcp-server-ipinfo"],
+        "args": ["--from", "git+https://github.com/briandconnelly/mcp-server-ipinfo.git", "mcp-server-ipinfo"],
         "env": {
             "IPINFO_API_TOKEN": "<YOUR TOKEN HERE>"
         }
