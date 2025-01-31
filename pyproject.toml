@@ -1,0 +1,39 @@
+[project]
+name = "mcp-server-ipinfo"
+version = "0.1.0"
+description = "IP Geolocation Server for MCP"
+readme = "README.md"
+license = { file = "LICENSE" }
+
+authors = [
+    { name = "Brian Connelly", email = "bdc@bconnelly.net" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Networking",
+]
+
+requires-python = ">=3.13"
+dependencies = [
+    "ipinfo>=5.1.1",
+    "mcp>=1.2.1",
+    "pydantic>=2.10.6",
+]
+
+[project.urls]
+Repository = "https://github.com/briandconnelly/mcp-server-ipinfo.git"
+Issues = "https://github.com/briandconnelly/mcp-server-ipinfo/issues"
+
+[project.scripts]
+mcp-server-ipinfo = "mcp_server_ipinfo.server:mcp.run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
