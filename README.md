@@ -5,8 +5,8 @@ This information can provide information about where the user is located and the
 
 ## Installation
 
-You'll need to create a token IPInfo API.
-If you don't already have one, you can signing up for a free account at https://ipinfo.io/signup.
+You'll need to create a token to use the IPInfo API.
+If you don't already have one, you can sign up for a free account at https://ipinfo.io/signup.
 
 ```yaml
 {
