@@ -13,6 +13,11 @@ mcp = FastMCP("IPInfo")
 def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
     """Get information about an IP address.
 
+    Use this tool to:
+    - Determine the user's geographic location to coarse granularity
+    - Get information about the user's internet service provider
+    - Get information about a specific IP address
+
     Args:
         ip (str | None): The IP address to look up. If None, returns information
             about the requesting client's IP address.
