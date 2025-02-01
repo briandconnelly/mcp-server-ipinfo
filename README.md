@@ -1,7 +1,7 @@
 # IP Geolocation MCP Server
 
 This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
-This information can provide information about where the user is located and the network that they are using.
+This can be used to determine where the user is located (approximately) and what network they are used.
 
 ![Example conversation using mcp-server-ipinfo](demo.png)
 
