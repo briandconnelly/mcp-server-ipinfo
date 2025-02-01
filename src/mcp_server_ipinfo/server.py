@@ -9,7 +9,7 @@ from .models import IPDetails
 mcp = FastMCP("IPInfo")
 
 
-@mcp.tool()
+@mcp.tool(description = "Get information about an IP address")
 def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
     """Get information about an IP address.
 
