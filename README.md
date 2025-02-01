@@ -11,11 +11,9 @@ This information can provide information about where the user is located and the
 You'll need to create a token to use the IPInfo API.
 If you don't already have one, you can sign up for a free account at https://ipinfo.io/signup.
 
-To use with Claude desktop, add the following to your `claude_desktop_config.json` file:
+To use with Claude desktop, add the following to the `mcpServers` section of your `claude_desktop_config.json` file:
 
 ```yaml
-{
-  "mcpServers": {
     "ipinfo": {
       "command": "uvx",
       "args": [
@@ -27,9 +25,7 @@ To use with Claude desktop, add the following to your `claude_desktop_config.jso
         "IPINFO_API_TOKEN": "<YOUR TOKEN HERE>"
       }
     }
-  }
-}
-```#L3-L13
+```
 
 
 ## Components
