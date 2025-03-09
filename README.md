@@ -1,4 +1,5 @@
 # IP Geolocation MCP Server
+[![smithery badge](https://smithery.ai/badge/@briandconnelly/mcp-server-ipinfo)](https://smithery.ai/server/@briandconnelly/mcp-server-ipinfo)
 
 This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
 This can be used to determine where the user is located (approximately) and what network they are used.
@@ -27,6 +28,13 @@ To use with Claude desktop, add the following to the `mcpServers` section of you
     }
 ```
 
+### Installing via Smithery
+
+To install IP Geolocation Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@briandconnelly/mcp-server-ipinfo):
+
+```bash
+npx -y @smithery/cli install @briandconnelly/mcp-server-ipinfo --client claude
+```
 
 ## Components
 
