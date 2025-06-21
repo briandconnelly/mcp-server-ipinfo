@@ -21,8 +21,7 @@ To use with Claude desktop, add the following to the `mcpServers` section of you
     "ipinfo": {
       "command": "uvx",
       "args": [
-        "--from",
-        "git+https://github.com/briandconnelly/mcp-server-ipinfo.git",
+        "mcp-server-ipinfo",
         "mcp-server-ipinfo"
       ],
       "env": {
