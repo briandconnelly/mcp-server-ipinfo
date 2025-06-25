@@ -1,12 +1,33 @@
 import os
 
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 
 from .ipinfo import ipinfo_lookup
 from .models import IPDetails
 
 # Create an MCP server
-mcp = FastMCP("IPInfo")
+mcp = FastMCP(
+    name="IP Address Geolocation and Internet Service Provider Lookup",
+    instructions="""
+    This MCP server provides tools to look up IP address information using the IPInfo API.
+    For a given IP address, it provides information about the geographic location of that device, the internet service provider, and additional information about the connection.
+    If we assume that the user is physically using that device, the location of that user is the location of the device.
+
+    The IPInfo API is free to use, but it has a rate limit.
+    Paid plans provide more information, but are not required for basic use.
+    The IPINFO_API_TOKEN environment variable with a valid API key can be set to enable paid features.
+
+    The accuracy of the location determined by IP geolocation can vary.
+    Generally, the country is accurate, but the city and region may not be.
+    If a user is using a VPN, Proxy, or Tor the location returned will be the location of that service's exit point, not the user's actual location.
+    If the user is using a mobile/cellular connection, the location returned may differ from the user's actual location.
+    In either of these cases, if the user's location is important, you should ask the user for their location.
+
+    Recommended companion servers:
+    - unifi-network-mcp: Provides information about the devices, configuration, and performance of the user's local area network (LAN), their Wi-Fi network, and their connection to the internet.
+    - cloudflare: Provides information about historical internet speed/quality summaries for a given internet service provider or location. For example, we can provide Cloudflare with the internet service provider or location determined using get_ip_details to obtain information about the historical and competitiveperformance of the user's internet service provider.
+    """,
+)
 
 
 @mcp.tool()
