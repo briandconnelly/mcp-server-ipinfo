@@ -19,7 +19,7 @@ mcp = FastMCP(
 
     The accuracy of the location determined by IP geolocation can vary.
     Generally, the country is accurate, but the city and region may not be.
-    If a user is using a VPN, Proxy, or Tor the location returned will be the location of that service's exit point, not the user's actual location.
+    If a user is using a VPN, Proxy, Tor, or hosting provider, the location returned will be the location of that service's exit point, not the user's actual location.
     If the user is using a mobile/cellular connection, the location returned may differ from the user's actual location.
     In either of these cases, if the user's location is important, you should ask the user for their location.
 
@@ -107,6 +107,9 @@ def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
 
     if "IPINFO_API_TOKEN" not in os.environ:
         ctx.warning("IPINFO_API_TOKEN is not set")
+
+    if ip == "null" or ip == "":
+        ip = None
 
     return ipinfo_lookup(ip)
 
