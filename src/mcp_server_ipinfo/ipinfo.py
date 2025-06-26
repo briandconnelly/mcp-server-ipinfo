@@ -45,4 +45,4 @@ def ipinfo_lookup(ip: str | None, **kwargs) -> IPDetails:
 
     details = handler.getDetails(ip_address=ip)
 
-    return IPDetails(**details.all, timestamp=str(datetime.now(timezone.utc)))
+    return IPDetails(**details.all, ts_retrieved=str(datetime.now(timezone.utc)))

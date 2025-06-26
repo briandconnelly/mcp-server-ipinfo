@@ -117,5 +117,5 @@ class IPDetails(BaseModel):
     anycast: bool | None = None
     """Boolean indicating if the IP address is an anycast IP address"""
 
-    timestamp: str | None = None
+    ts_retrieved: str | None = None
     """The timestamp of the IP address lookup"""

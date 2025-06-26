@@ -81,7 +81,7 @@ async def get_ip_details(
         - ip: The IP address that was analyzed
         - hostname: Associated hostname/domain name
         - org: Organization/ISP name (e.g., "Google LLC", "Comcast Cable")
-        - timestamp: The timestamp when the IP address was looked up (UTC)
+        - ts_retrieved: The timestamp when the IP address was looked up (UTC)
 
         Geographic Location:
         - city: City name
