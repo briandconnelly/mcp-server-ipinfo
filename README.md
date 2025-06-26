@@ -28,7 +28,6 @@ While each client has its own way of specifying, you'll generally use the follow
 
 If you'd like to use the latest and greatest, the server can be pulled straight from GitHub.
 Just add an additional `--from` argument:
---from git+https://github.com/briandconnelly/mcp-server-ipinfo mcp-server-ipinfo
 
 
 | Field | Value |
