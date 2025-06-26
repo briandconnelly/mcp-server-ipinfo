@@ -15,20 +15,27 @@ This can be used to determine where the user is located (approximately) and what
 You'll need to create a token to use the IPInfo API.
 If you don't already have one, you can sign up for a free account at https://ipinfo.io/signup.
 
-To use with Claude desktop, add the following to the `mcpServers` section of your `claude_desktop_config.json` file:
+While each client has its own way of specifying, you'll generally use the following values:
 
-```yaml
-    "ipinfo": {
-      "command": "uvx",
-      "args": [
-        "mcp-server-ipinfo",
-        "mcp-server-ipinfo"
-      ],
-      "env": {
-        "IPINFO_API_TOKEN": "<YOUR TOKEN HERE>"
-      }
-    }
-```
+| Field | Value |
+|-------|-------|
+| **Command** | `uvx` |
+| **Arguments** | `mcp-server-ipinfo` |
+| **Environment** | `IPINFO_API_TOKEN` = `<YOUR TOKEN>` |
+
+
+### Development Version
+
+If you'd like to use the latest and greatest, the server can be pulled straight from GitHub.
+Just add an additional `--from` argument:
+--from git+https://github.com/briandconnelly/mcp-server-ipinfo mcp-server-ipinfo
+
+
+| Field | Value |
+|-------|-------|
+| **Command** | `uvx` |
+| **Arguments** | `--from`, `git+https://github.com/briandconnelly/mcp-server-ipinfo`, `mcp-server-ipinfo` |
+| **Environment** | `IPINFO_API_TOKEN` = `<YOUR TOKEN>` |
 
 
 ## Components
