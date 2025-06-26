@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 import ipinfo
 
@@ -44,4 +45,4 @@ def ipinfo_lookup(ip: str | None, **kwargs) -> IPDetails:
 
     details = handler.getDetails(ip_address=ip)
 
-    return IPDetails(**details.all)
+    return IPDetails(**details.all, timestamp=str(datetime.now(timezone.utc)))

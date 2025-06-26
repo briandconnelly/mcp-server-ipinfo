@@ -1,18 +1,24 @@
 import ipaddress
 import os
+from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from pydantic import Field
 
+from .cache import IPInfoCache
 from .ipinfo import ipinfo_lookup
 from .models import IPDetails
+
+cache = IPInfoCache()
+
 
 # Create an MCP server
 mcp = FastMCP(
     name="IP Address Geolocation and Internet Service Provider Lookup",
     instructions="""
     This MCP server provides tools to look up IP address information using the IPInfo API.
-    For a given IP address, it provides information about the geographic location of that device, the internet service provider, and additional information about the connection.
+    For a given IPv4 or IPv6 address, it provides information about the geographic location of that device, the internet service provider, and additional information about the connection.
     If we assume that the user is physically using that device, the location of that user is the location of the device.
 
     The IPInfo API is free to use, but it has a rate limit.
@@ -23,7 +29,11 @@ mcp = FastMCP(
     Generally, the country is accurate, but the city and region may not be.
     If a user is using a VPN, Proxy, Tor, or hosting provider, the location returned will be the location of that service's exit point, not the user's actual location.
     If the user is using a mobile/cellular connection, the location returned may differ from the user's actual location.
-    In either of these cases, if the user's location is important, you should ask the user for their location.
+    If anycast is true, the location returned may differ from the user's actual location.
+    In any of these cases, if the user's location is important, you should ask the user for their location.
+
+    An IPv4 address consists of four decimal numbers separated by dots (.), known as octets.
+    An IPv6 address consists of eight groups of four hexadecimal numbers separated by colons (:).
 
     Recommended companion servers:
     - unifi-network-mcp: Provides information about the devices, configuration, and performance of the user's local area network (LAN), their Wi-Fi network, and their connection to the internet.
@@ -33,7 +43,16 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-async def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
+async def get_ip_details(
+    ip: Annotated[
+        str | None,
+        Field(
+            description="The IP address to analyze (IPv4 or IPv6). If None or not provided, analyzes the requesting client's IP address.",
+            examples=["8.8.8.8", "2001:4860:4860::8888", None],
+        ),
+    ] = None,
+    ctx: Context = None,
+) -> IPDetails:
     """Get detailed information about an IP address including location, ISP, and network details.
 
     This tool provides comprehensive IP address analysis including geographic location,
@@ -62,6 +81,7 @@ async def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
         - ip: The IP address that was analyzed
         - hostname: Associated hostname/domain name
         - org: Organization/ISP name (e.g., "Google LLC", "Comcast Cable")
+        - timestamp: The timestamp when the IP address was looked up (UTC)
 
         Geographic Location:
         - city: City name
@@ -107,24 +127,50 @@ async def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
         Basic location and ISP info works without authentication.
     """
 
+    ctx.info(f"Getting details for IP address {ip}")
+
     if "IPINFO_API_TOKEN" not in os.environ:
         ctx.warning("IPINFO_API_TOKEN is not set")
 
-    if ip == "null" or ip == "":
+    if ip in ("null", "", "undefined", "0.0.0.0", "::"):
         ip = None
+
+    # If IP address given, check cache first
+    if ip and (cached := cache.get(ip)):
+        ctx.debug(f"Returning cached result for {ip}")
+        return cached
 
     if ip:
         try:
-            ipaddress.ip_address(ip)
+            parsed_ip = ipaddress.ip_address(ip)
+
+            if parsed_ip.is_private:
+                raise ToolError(
+                    f"{ip} is a private IP address. Geolocation may not be meaningful."
+                )
+            elif parsed_ip.is_loopback:
+                raise ToolError(
+                    f"{ip} is a loopback IP address. Geolocation may not be meaningful."
+                )
+            elif parsed_ip.is_multicast:
+                raise ToolError(
+                    f"{ip} is a multicast IP address. Geolocation may not be meaningful."
+                )
+            elif parsed_ip.is_reserved:
+                raise ToolError(
+                    f"{ip} is a reserved IP address. Geolocation may not be meaningful."
+                )
         except ValueError:
             ctx.error(f"Got an invalid IP address: {ip}")
-            raise ToolError(f"Invalid IP address: {ip}")
+            raise ToolError(f"{ip} is not a valid IP address")
 
     try:
-        return ipinfo_lookup(ip)
+        result = ipinfo_lookup(ip)
+        cache.set(result.ip, result)
+        return result
     except Exception as e:
         ctx.error(f"Failed to look up IP details: {str(e)}")
-        raise ToolError(f"IP lookup failed: {str(e)}")
+        raise ToolError(f"Lookup failed for IP address {str(e)}")
 
 
 @mcp.tool()

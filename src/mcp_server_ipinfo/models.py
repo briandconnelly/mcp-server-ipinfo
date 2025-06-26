@@ -109,7 +109,13 @@ class IPDetails(BaseModel):
     - network: str - The network of the abuse contact"""
 
     bogon: bool | None = None
-    """Boolean indicating if the IP address is a bogon IP address"""
+    """Boolean indicating if the IP address is a bogon IP address.
+    A bogon IP address is an IP address that is not assigned to a network and is used for testing or other purposes.
+    This is not a reliable indicator of the IP address's location.
+    """
 
     anycast: bool | None = None
     """Boolean indicating if the IP address is an anycast IP address"""
+
+    timestamp: str | None = None
+    """The timestamp of the IP address lookup"""
