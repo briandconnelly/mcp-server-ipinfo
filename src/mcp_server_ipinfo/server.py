@@ -1,6 +1,8 @@
+import ipaddress
 import os
 
 from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 
 from .ipinfo import ipinfo_lookup
 from .models import IPDetails
@@ -31,7 +33,7 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
+async def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
     """Get detailed information about an IP address including location, ISP, and network details.
 
     This tool provides comprehensive IP address analysis including geographic location,
@@ -111,7 +113,18 @@ def get_ip_details(ip: str | None, ctx: Context) -> IPDetails:
     if ip == "null" or ip == "":
         ip = None
 
-    return ipinfo_lookup(ip)
+    if ip:
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            ctx.error(f"Got an invalid IP address: {ip}")
+            raise ToolError(f"Invalid IP address: {ip}")
+
+    try:
+        return ipinfo_lookup(ip)
+    except Exception as e:
+        ctx.error(f"Failed to look up IP details: {str(e)}")
+        raise ToolError(f"IP lookup failed: {str(e)}")
 
 
 @mcp.tool()
