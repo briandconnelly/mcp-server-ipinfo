@@ -3,6 +3,7 @@
 This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
 This can be used to determine where the user is located (approximately) and what network they are used.
 
+[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/briandconnelly/mcp-server-ipinfo)](https://archestra.ai/mcp-catalog/briandconnelly__mcp-server-ipinfo)
 <a href="https://glama.ai/mcp/servers/pll7u5ak1h">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/pll7u5ak1h/badge" alt="IP Geolocation Server MCP server" />
 </a>
