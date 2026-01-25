@@ -129,6 +129,11 @@ def mock_lifespan_state(mock_handler, cache) -> dict:
 
 @pytest.fixture
 def mock_context_with_state(mock_context, mock_lifespan_state) -> MagicMock:
-    """Create a mock context with lifespan state."""
-    mock_context.lifespan_state = mock_lifespan_state
+    """Create a mock context with lifespan context."""
+    # Mock the FastMCP server with _lifespan_result (FastMCP 2.x pattern)
+    mock_fastmcp = MagicMock()
+    mock_fastmcp._lifespan_result = mock_lifespan_state
+    mock_context.fastmcp = mock_fastmcp
+    # Also provide lifespan_context for forward compatibility with FastMCP 3.x
+    mock_context.lifespan_context = mock_lifespan_state
     return mock_context

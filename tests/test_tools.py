@@ -127,7 +127,7 @@ class TestGetIPDetails:
 
     async def test_cache_hit(self, mock_context_with_state, sample_ip_details):
         """Test that cached results are returned."""
-        cache = mock_context_with_state.lifespan_state["cache"]
+        cache = mock_context_with_state.lifespan_context["cache"]
         await cache.set("8.8.8.8", sample_ip_details)
 
         results = await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
@@ -167,7 +167,7 @@ class TestGetIPDetails:
 
     async def test_with_cache(self, mock_context_with_state, sample_ip_details):
         """Test uses cache for known IPs."""
-        cache = mock_context_with_state.lifespan_state["cache"]
+        cache = mock_context_with_state.lifespan_context["cache"]
         await cache.set("8.8.8.8", sample_ip_details)
 
         ips = ["8.8.8.8", "1.1.1.1"]

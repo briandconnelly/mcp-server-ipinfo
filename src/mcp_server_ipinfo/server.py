@@ -61,9 +61,11 @@ mcp = FastMCP(
 def _get_handler_and_cache(
     ctx: Context,
 ) -> tuple[ipinfo.AsyncHandler, IPInfoCache]:
-    """Get the handler and cache from lifespan state."""
-    lifespan_state = ctx.lifespan_state
-    return lifespan_state["ipinfo_handler"], lifespan_state["cache"]
+    """Get the handler and cache from lifespan context."""
+    # In FastMCP 2.x, lifespan result is accessed via ctx.fastmcp._lifespan_result
+    # In FastMCP 3.x, this will be ctx.lifespan_context
+    lifespan_context = ctx.fastmcp._lifespan_result
+    return lifespan_context["ipinfo_handler"], lifespan_context["cache"]
 
 
 def _validate_ip(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
