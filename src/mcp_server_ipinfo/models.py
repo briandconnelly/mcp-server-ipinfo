@@ -2,120 +2,287 @@ from pydantic import BaseModel, condecimal, constr
 from pydantic.networks import HttpUrl, IPvAnyAddress
 
 
+class ASNDetails(BaseModel):
+    """
+    Autonomous System Number (ASN) information.
+
+    Available in: IPinfo Core, IPinfo Plus, IPinfo Enterprise
+    """
+
+    asn: str | None = None
+    """The ASN identifier (e.g., 'AS15169')"""
+
+    name: str | None = None
+    """The organization name (e.g., 'Google LLC')"""
+
+    domain: str | None = None
+    """The primary domain of the organization"""
+
+    route: str | None = None
+    """The IP route/prefix (e.g., '8.8.8.0/24')"""
+
+    type: str | None = None
+    """Organization type: 'isp', 'hosting', 'business', 'education', or 'government'"""
+
+
+class PrivacyDetails(BaseModel):
+    """
+    Privacy and anonymity detection information.
+
+    Identifies whether an IP is using VPN, proxy, Tor, relay services,
+    or belongs to a hosting/cloud provider.
+
+    Available in: IPinfo Core, IPinfo Plus, IPinfo Enterprise
+    """
+
+    vpn: bool | None = None
+    """Whether the IP is a VPN exit node"""
+
+    proxy: bool | None = None
+    """Whether the IP is an open web proxy"""
+
+    tor: bool | None = None
+    """Whether the IP is a Tor exit node"""
+
+    relay: bool | None = None
+    """Whether the IP is an anonymous relay (e.g., iCloud Private Relay)"""
+
+    hosting: bool | None = None
+    """Whether the IP belongs to a hosting provider, cloud service, or data center"""
+
+    service: str | None = None
+    """Name of the detected VPN/proxy service (e.g., 'NordVPN', 'ExpressVPN')"""
+
+
+class CarrierDetails(BaseModel):
+    """
+    Mobile carrier/operator information for cellular IPs.
+
+    Available in: IPinfo Plus, IPinfo Enterprise
+    """
+
+    name: str | None = None
+    """The name of the mobile carrier (e.g., 'Verizon Wireless')"""
+
+    mcc: str | None = None
+    """Mobile Country Code - identifies the country of the carrier"""
+
+    mnc: str | None = None
+    """Mobile Network Code - identifies the specific carrier within the country"""
+
+
+class CompanyDetails(BaseModel):
+    """
+    Company/organization information for the IP owner.
+
+    Available in: IPinfo Plus, IPinfo Enterprise
+    """
+
+    name: str | None = None
+    """The company name"""
+
+    domain: str | None = None
+    """The company's primary domain"""
+
+    type: str | None = None
+    """Company type: 'isp', 'hosting', 'business', 'education', or 'government'"""
+
+
+class DomainsDetails(BaseModel):
+    """
+    Hosted domains (reverse IP) information.
+
+    Shows domains hosted on this IP address.
+
+    Available in: IPinfo Enterprise
+    """
+
+    ip: str | None = None
+    """The IP address"""
+
+    total: int | None = None
+    """Total number of domains hosted on this IP"""
+
+    domains: list[str] | None = None
+    """List of domain names hosted on this IP (up to 5 in standard response)"""
+
+
+class AbuseDetails(BaseModel):
+    """
+    Abuse contact information for reporting malicious activity.
+
+    Available in: IPinfo Enterprise
+    """
+
+    address: str | None = None
+    """Physical address of the abuse contact"""
+
+    country: str | None = None
+    """Country of the abuse contact (ISO 3166-1 alpha-2)"""
+
+    email: str | None = None
+    """Email address for abuse reports"""
+
+    name: str | None = None
+    """Name of the abuse contact or organization"""
+
+    network: str | None = None
+    """Network range covered by this abuse contact"""
+
+    phone: str | None = None
+    """Phone number for abuse reports"""
+
+
+class ContinentDetails(BaseModel):
+    """Continent information."""
+
+    code: str | None = None
+    """Two-letter continent code (e.g., 'NA', 'EU', 'AS', 'AF', 'OC', 'SA', 'AN')"""
+
+    name: str | None = None
+    """Full continent name (e.g., 'North America', 'Europe', 'Asia')"""
+
+
+class CountryFlagDetails(BaseModel):
+    """Country flag information."""
+
+    emoji: str | None = None
+    """Flag emoji character"""
+
+    unicode: str | None = None
+    """Unicode code points for the flag emoji"""
+
+
+class CountryCurrencyDetails(BaseModel):
+    """Country currency information."""
+
+    code: str | None = None
+    """Three-letter ISO 4217 currency code (e.g., 'USD', 'EUR', 'GBP')"""
+
+    symbol: str | None = None
+    """Currency symbol (e.g., '$', '€', '£')"""
+
+
+class ResidentialProxyDetails(BaseModel):
+    """
+    Residential proxy detection information.
+
+    Identifies whether an IP is part of a residential proxy network,
+    which routes traffic through real residential IP addresses.
+
+    Available in: IPinfo Enterprise (with residential proxy add-on)
+    """
+
+    ip: IPvAnyAddress
+    """The IP address that was checked"""
+
+    last_seen: str | None = None
+    """Last recorded date when the proxy was active (YYYY-MM-DD format)"""
+
+    percent_days_seen: float | None = None
+    """Percentage of days the IP was seen active in the last 7-day period (0-100)"""
+
+    service: str | None = None
+    """Name of the residential proxy service (e.g., 'Luminati', 'Oxylabs')"""
+
+    ts_retrieved: str | None = None
+    """Timestamp when this information was retrieved (UTC ISO format)"""
+
+
 class IPDetails(BaseModel):
     """
-    A Pydantic model representing detailed information about an IP address.
+    Comprehensive IP address information including geolocation, network, and metadata.
 
-    This model contains geographical, network, and additional metadata about an IP address,
-    including location coordinates, country information, ISP details, and timezone data.
+    Fields available depend on your IPinfo plan:
+    - IPinfo Lite (free): country, country_code, continent, asn basics
+    - IPinfo Core: Full geolocation, ASN details, privacy detection
+    - IPinfo Plus: Adds carrier info, accuracy radius, company data
+    - IPinfo Enterprise: Adds domains, abuse contacts, WHOIS data
     """
 
     ip: IPvAnyAddress = None  # type: ignore
-    """The IP address (supports both IPv4 and IPv6 formats)"""
+    """The IP address (IPv4 or IPv6)"""
 
     hostname: str | None = None
-    """The hostname associated with the IP address, if available"""
+    """Reverse DNS hostname for the IP address"""
 
+    # Geographic location fields
     city: str | None = None
-    """The city where the IP address is located"""
+    """City name"""
 
     region: str | None = None
-    """The region/state where the IP address is located"""
+    """Region/state/province name"""
+
+    region_code: str | None = None
+    """Region/state code (e.g., 'CA' for California, 'TX' for Texas)"""
 
     country: constr(pattern=r"^[A-Z]{2}$") | None = None
-    """The two-letter ISO country code (e.g., 'US', 'GB', 'DE')"""
-
-    loc: str | None = None
-    """The geographical coordinates in the format 'latitude,longitude'"""
-
-    org: str | None = None
-    """The organization/ISP associated with the IP address (free plan only; paid plan: see `asn` field)"""
-
-    postal: str | None = None
-    """The postal/ZIP code of the IP address location"""
-
-    timezone: str | None = None
-    """The timezone of the IP address location (e.g., 'America/New_York')"""
+    """Two-letter ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB', 'DE')"""
 
     country_name: str | None = None
-    """The full name of the country"""
+    """Full country name"""
 
-    isEU: bool | None = None
-    """Boolean indicating if the country is in the European Union"""
-
-    country_flag_url: HttpUrl | None = None
-    """URL to the country's flag image"""
-
-    country_flag: dict | None = None
-    """Dictionary containing country flag information"""
-
-    country_currency: dict | None = None
-    """Dictionary containing country currency information with fields:
-    - code: str - The three-letter currency code (e.g., 'USD', 'EUR', 'GBP')
-    - symbol: str - The currency symbol (e.g., '$', '€', '£')"""
-
-    continent: dict | None = None
-    """Dictionary containing continent information with fields:
-    - code: str - The two-letter continent code (e.g., 'NA', 'EU', 'AS')
-    - name: str - The full continent name (e.g., 'North America', 'Europe', 'Asia')"""
+    loc: str | None = None
+    """Geographic coordinates as 'latitude,longitude' string"""
 
     latitude: condecimal(ge=-90, le=90) | None = None
-    """The latitude coordinate, ranging from -90 to 90 degrees"""
+    """Latitude coordinate (-90 to 90 degrees)"""
 
     longitude: condecimal(ge=-180, le=180) | None = None
-    """The longitude coordinate, ranging from -180 to 180 degrees"""
+    """Longitude coordinate (-180 to 180 degrees)"""
 
-    asn: dict | None = None
-    """Dictionary containing ASN information with fields (Basic, Standard, Business, and Enterprise plans only):
-    - asn: str - The ASN number
-    - name: str - The name of the ASN
-    - domain: str - The domain of the ASN
-    - route: str - The route of the ASN
-    - type: str - The type of the ASN"""
+    postal: str | None = None
+    """Postal/ZIP code"""
 
-    privacy: dict | None = None
-    """Dictionary containing privacy information with fields (Standard, Business, and Enterprise plans only):
-    - vpn: bool - Whether the IP address is in a VPN
-    - proxy: bool - Whether the IP address is in a proxy
-    - tor: bool - Whether the IP address is in a Tor exit node
-    - relay: bool - Whether the IP address is in a relay node
-    - hosting: bool - Whether the IP address is in a hosting provider
-    - service: bool - Whether the IP address is in a service provider"""
+    timezone: str | None = None
+    """IANA timezone identifier (e.g., 'America/New_York', 'Europe/London')"""
 
-    carrier: dict | None = None
-    """Dictionary containing mobile operator information with fields (Business and Enterprise plans only):
-    - name: str - The name of the mobile operator
-    - mcc: str - The Mobile Country Code of the mobile operator
-    - mnc: str - The Mobile Network Code of the mobile operator"""
+    # Country metadata
+    continent: ContinentDetails | None = None
+    """Continent information"""
 
-    company: dict | None = None
-    """Dictionary containing company information with fields (Business and Enterprise plans only):
-    - name: str - The name of the company
-    - domain: HttpUrl - The domain of the company
-    - type: str - The type of the company"""
+    country_flag: CountryFlagDetails | None = None
+    """Country flag emoji and unicode data"""
 
-    domains: dict | None = None
-    """Dictionary containing domains information with fields (Business and Enterprise plans only):
-    - ip: IPvAnyAddress - The IP address of the domain
-    - total: int - The total number of domains associated with the IP address
-    - domains: list[HttpUrl] - The list of domains associated with the IP address"""
+    country_flag_url: HttpUrl | None = None
+    """URL to country flag image"""
 
-    abuse: dict | None = None
-    """Dictionary containing abuse contact information with fields (Business and Enterprise plans only):
-    - address: str - The address of the abuse contact
-    - country: str - The country of the abuse contact
-    - email: str - The email of the abuse contact
-    - phone: str - The phone number of the abuse contact
-    - network: str - The network of the abuse contact"""
+    country_currency: CountryCurrencyDetails | None = None
+    """Country currency information"""
 
-    bogon: bool | None = None
-    """Boolean indicating if the IP address is a bogon IP address.
-    A bogon IP address is an IP address that is not assigned to a network and is used for testing or other purposes.
-    This is not a reliable indicator of the IP address's location.
-    """
+    isEU: bool | None = None
+    """Whether the country is in the European Union"""
+
+    # Network/organization fields
+    org: str | None = None
+    """Organization/ISP string (free tier format: 'AS##### Org Name')"""
+
+    asn: ASNDetails | None = None
+    """Detailed ASN information (IPinfo Core+)"""
+
+    # Privacy and security fields
+    privacy: PrivacyDetails | None = None
+    """VPN/proxy/Tor/hosting detection (IPinfo Core+)"""
 
     anycast: bool | None = None
-    """Boolean indicating if the IP address is an anycast IP address"""
+    """Whether this IP uses anycast routing"""
 
+    bogon: bool | None = None
+    """Whether this is a bogon (unallocated/reserved) IP address"""
+
+    # Extended fields (higher tiers)
+    carrier: CarrierDetails | None = None
+    """Mobile carrier information for cellular IPs (IPinfo Plus+)"""
+
+    company: CompanyDetails | None = None
+    """Company/organization that owns the IP (IPinfo Plus+)"""
+
+    domains: DomainsDetails | None = None
+    """Domains hosted on this IP (IPinfo Enterprise)"""
+
+    abuse: AbuseDetails | None = None
+    """Abuse contact information (IPinfo Enterprise)"""
+
+    # Metadata
     ts_retrieved: str | None = None
-    """The timestamp of the IP address lookup"""
+    """Timestamp when this lookup was performed (UTC ISO format)"""

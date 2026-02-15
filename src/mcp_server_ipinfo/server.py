@@ -1,16 +1,34 @@
 import ipaddress
-import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
+import ipinfo
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from .cache import IPInfoCache
-from .ipinfo import ipinfo_lookup
-from .models import IPDetails
+from .ipinfo import (
+    create_async_handler,
+    ipinfo_batch_lookup,
+    ipinfo_get_map_url,
+    ipinfo_lookup,
+    ipinfo_resproxy_lookup,
+)
+from .models import IPDetails, ResidentialProxyDetails
 
-cache = IPInfoCache()
+
+@asynccontextmanager
+async def app_lifespan(server: FastMCP) -> AsyncIterator[dict]:
+    """Initialize the async IPInfo handler and cache at startup."""
+    handler = await create_async_handler()
+    cache = IPInfoCache()
+
+    try:
+        yield {"ipinfo_handler": handler, "cache": cache}
+    finally:
+        await handler.deinit()
 
 
 # Create an MCP server
@@ -18,204 +36,309 @@ mcp = FastMCP(
     name="IP Address Geolocation and Internet Service Provider Lookup",
     instructions="""
     This MCP server provides tools to look up IP address information using the IPInfo API.
-    For a given IPv4 or IPv6 address, it provides information about the geographic location of that device, the internet service provider, and additional information about the connection.
-    If we assume that the user is physically using that device, the location of that user is the location of the device.
+    For a given IPv4 or IPv6 address, it provides information about the geographic location
+    of that device, the internet service provider, and additional information about the connection.
 
-    The IPInfo API is free to use, but it has a rate limit.
-    Paid plans provide more information, but are not required for basic use.
-    The IPINFO_API_TOKEN environment variable with a valid API key can be set to enable paid features.
+    Available tools:
+    - get_ip_details: Look up details for one or more IP addresses
+    - get_residential_proxy_info: Check if an IP is a residential proxy
+    - get_map_url: Generate an interactive map URL showing IP locations
 
-    The accuracy of the location determined by IP geolocation can vary.
-    Generally, the country is accurate, but the city and region may not be.
-    If a user is using a VPN, Proxy, Tor, or hosting provider, the location returned will be the location of that service's exit point, not the user's actual location.
-    If the user is using a mobile/cellular connection, the location returned may differ from the user's actual location.
-    If anycast is true, the location returned may differ from the user's actual location.
-    In any of these cases, if the user's location is important, you should ask the user for their location.
+    The IPInfo API is free to use with rate limits. Paid plans provide more information.
+    Set the IPINFO_API_TOKEN environment variable with a valid API key for premium features.
 
-    An IPv4 address consists of four decimal numbers separated by dots (.), known as octets.
+    The accuracy of IP geolocation can vary. Generally, the country is accurate, but the
+    city and region may not be. If a user is using a VPN, Proxy, Tor, or hosting provider,
+    the location returned will be the location of that service's exit point.
+
+    An IPv4 address consists of four decimal numbers separated by dots (.).
     An IPv6 address consists of eight groups of four hexadecimal numbers separated by colons (:).
-
-    Recommended companion servers:
-    - unifi-network-mcp: Provides information about the devices, configuration, and performance of the user's local area network (LAN), their Wi-Fi network, and their connection to the internet.
-    - cloudflare: Provides information about historical internet speed/quality summaries for a given internet service provider or location. For example, we can provide Cloudflare with the internet service provider or location determined using get_ip_details to obtain information about the historical and competitiveperformance of the user's internet service provider.
     """,
+    lifespan=app_lifespan,
 )
 
 
-@mcp.tool()
+def _get_handler_and_cache(
+    ctx: Context,
+) -> tuple[ipinfo.AsyncHandler, IPInfoCache]:
+    """Get the handler and cache from lifespan context."""
+    # In FastMCP 2.x, lifespan result is accessed via ctx.fastmcp._lifespan_result
+    # In FastMCP 3.x, this will be ctx.lifespan_context
+    lifespan_context = ctx.fastmcp._lifespan_result
+    return lifespan_context["ipinfo_handler"], lifespan_context["cache"]
+
+
+def _validate_ip(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """
+    Validate an IP address and check for special addresses.
+
+    Args:
+        ip: The IP address string to validate.
+
+    Returns:
+        The parsed IP address object.
+
+    Raises:
+        ToolError: If the IP is invalid or is a special address type.
+    """
+    try:
+        parsed_ip = ipaddress.ip_address(ip)
+    except ValueError:
+        raise ToolError(f"{ip} is not a valid IP address")
+
+    # Check in order of specificity - loopback and reserved are subsets of private
+    if parsed_ip.is_loopback:
+        raise ToolError(f"{ip} is a loopback IP address. Geolocation is not available.")
+    elif parsed_ip.is_multicast:
+        raise ToolError(
+            f"{ip} is a multicast IP address. Geolocation is not available."
+        )
+    elif parsed_ip.is_reserved:
+        raise ToolError(f"{ip} is a reserved IP address. Geolocation is not available.")
+    elif parsed_ip.is_private:
+        raise ToolError(f"{ip} is a private IP address. Geolocation is not available.")
+
+    return parsed_ip
+
+
+def _normalize_ip(ip: str) -> str | None:
+    """Normalize empty/placeholder IP values to None."""
+    if ip in ("null", "", "undefined", "0.0.0.0", "::"):
+        return None
+    return ip
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+    }
+)
 async def get_ip_details(
-    ip: Annotated[
-        str | None,
+    ips: Annotated[
+        list[str] | None,
         Field(
-            description="The IP address to analyze (IPv4 or IPv6). If None or not provided, analyzes the requesting client's IP address.",
-            examples=["8.8.8.8", "2001:4860:4860::8888", None],
+            description="IP address(es) to analyze (IPv4 or IPv6). Pass a list of one or more IPs. If not provided, analyzes the requesting client's IP address.",
+            examples=[["8.8.8.8"], ["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
         ),
     ] = None,
     ctx: Context = None,
-) -> IPDetails:
-    """Get detailed information about an IP address including location, ISP, and network details.
+) -> list[IPDetails]:
+    """Get detailed information about IP addresses including location, ISP, and network details.
 
     This tool provides comprehensive IP address analysis including geographic location,
-    internet service provider information, network details, and security context.
-    Use when you need to understand the user's location, ISP, and network details or those of
-    a given IP address.
+    internet service provider information, and network details.
 
     Common use cases:
-    - Analyze user's current location and connection details (leave ip parameter blank)
-    - Investigate suspicious IP addresses for security analysis
-    - Determine geographic distribution of website visitors or API users
-    - Look up ISP and hosting provider information for network troubleshooting
-    - Get timezone information for scheduling or time-sensitive operations
-    - Verify if an IP belongs to a VPN, proxy, or hosting provider
-    - Check country-specific compliance requirements (EU, etc.)
+    - Analyze user's current location and connection details (omit ips parameter)
+    - Investigate one or more IP addresses for security analysis
+    - Look up ISP and hosting provider information
+    - Analyze server logs to identify visitor locations
+    - Geographic distribution analysis
 
-    Args:
-        ip: The IP address to analyze (IPv4 or IPv6). If None or not provided,
-            analyzes the requesting client's IP address.
-        ctx: The MCP request context.
+    Returns a list of IPDetails, each with: ip, hostname, city, region, country, postal,
+    timezone, org, loc (coordinates), and premium fields like asn, privacy, carrier if available.
+
+    Invalid or special IPs (private, loopback, etc.) are skipped with warnings.
+    Use the 'ip' field in results to match back to your input.
+
+    Note: Some features require IPINFO_API_TOKEN environment variable.
+    """
+    handler, cache = _get_handler_and_cache(ctx)
+
+    # Handle client IP lookup (no IPs provided)
+    if ips is None:
+        await ctx.info("Looking up client IP details")
+        try:
+            result = await ipinfo_lookup(handler, None)
+            await cache.set(str(result.ip), result)
+            return [result]
+        except Exception as e:
+            await ctx.error(f"Failed to look up client IP: {e}")
+            raise ToolError(f"Lookup failed: {e}")
+
+    # Normalize and filter IPs
+    normalized_ips = []
+    for ip in ips:
+        norm = _normalize_ip(ip)
+        if norm is not None:
+            normalized_ips.append(norm)
+
+    if not normalized_ips:
+        raise ToolError("No valid IP addresses provided")
+
+    # Check cache and filter valid IPs
+    cached_results = await cache.get_batch(normalized_ips)
+    ips_to_lookup = []
+    skipped = []
+
+    for ip in normalized_ips:
+        if ip in cached_results:
+            continue
+
+        try:
+            _validate_ip(ip)
+            ips_to_lookup.append(ip)
+        except ToolError as e:
+            skipped.append((ip, str(e)))
+
+    # Log skipped IPs
+    for ip, reason in skipped:
+        await ctx.warning(f"Skipping {ip}: {reason}")
+
+    if cached_results:
+        await ctx.info(f"Found {len(cached_results)} IPs in cache")
+
+    if not ips_to_lookup and not cached_results:
+        raise ToolError("No valid IP addresses to look up")
+
+    # Perform lookup for non-cached IPs
+    new_results = {}
+    if ips_to_lookup:
+        await ctx.info(f"Looking up {len(ips_to_lookup)} IP address(es)")
+        try:
+            if len(ips_to_lookup) == 1:
+                # Single IP - use regular lookup
+                result = await ipinfo_lookup(handler, ips_to_lookup[0])
+                new_results[ips_to_lookup[0]] = result
+            else:
+                # Multiple IPs - use batch lookup
+                new_results = await ipinfo_batch_lookup(
+                    handler, ips_to_lookup, raise_on_fail=False
+                )
+            await cache.set_batch(new_results)
+        except Exception as e:
+            await ctx.error(f"IP lookup failed: {e}")
+            raise ToolError(f"Lookup failed: {e}")
+
+    # Combine results
+    all_results = {**cached_results, **new_results}
+
+    # Return in original order where possible
+    ordered_results = []
+    for ip in normalized_ips:
+        if ip in all_results:
+            ordered_results.append(all_results[ip])
+
+    await ctx.info(
+        f"Returning {len(ordered_results)} result(s) "
+        f"({len(skipped)} skipped, {len(cached_results)} cached)"
+    )
+
+    return ordered_results
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+    }
+)
+async def get_residential_proxy_info(
+    ip: Annotated[
+        str,
+        Field(
+            description="The IP address to check for residential proxy usage (IPv4 or IPv6).",
+            examples=["142.250.80.46"],
+        ),
+    ],
+    ctx: Context = None,
+) -> ResidentialProxyDetails:
+    """Check if an IP address is associated with a residential proxy service.
+
+    Residential proxies route traffic through real residential IP addresses,
+    making them harder to detect than datacenter proxies. This tool identifies
+    such IPs and provides details about the proxy service.
 
     Returns:
-        IPDetails: Comprehensive IP information including:
+    - ip: The checked IP address
+    - last_seen: Last date the proxy was active (YYYY-MM-DD)
+    - percent_days_seen: Activity percentage over the last 7 days
+    - service: Name of the residential proxy service
 
-        Basic Info:
-        - ip: The IP address that was analyzed
-        - hostname: Associated hostname/domain name
-        - org: Organization/ISP name (e.g., "Google LLC", "Comcast Cable")
-        - ts_retrieved: The timestamp when the IP address was looked up (UTC)
+    Common use cases:
+    - Fraud detection and prevention
+    - Bot detection
+    - Ad fraud analysis
+    - Security investigations
 
-        Geographic Location:
-        - city: City name
-        - region: State/province/region name
-        - country: Two-letter ISO country code (e.g., "US", "GB")
-        - country_name: Full country name
-        - postal: ZIP/postal code
-        - loc: Coordinates as "latitude,longitude" string
-        - latitude/longitude: Separate coordinate values
-        - timezone: IANA timezone identifier (e.g., "America/New_York")
-
-        Regional Info:
-        - continent: Continent information dictionary
-        - country_flag: Country flag image data
-        - country_flag_url: URL to country flag image
-        - country_currency: Currency information for the country
-        - isEU: True if country is in European Union
-
-        Network/Security Info (some features require paid API plan):
-        - asn: Autonomous System Number details
-        - privacy: VPN/proxy/hosting detection data
-        - carrier: Mobile network operator info (for cellular IPs)
-        - company: Company/organization details
-        - domains: Associated domain names
-        - abuse: Abuse contact information
-        - bogon: True if IP is in bogon/reserved range
-        - anycast: True if IP uses anycast routing
-
-    Examples:
-        # Get your own IP details
-        my_info = get_ip_details()
-
-        # Analyze a specific IP
-        server_info = get_ip_details("8.8.8.8")
-
-        # Check if IP is from EU for GDPR compliance
-        details = get_ip_details("192.168.1.1")
-        is_eu_user = details.isEU
-
-    Note:
-        Some advanced features (ASN, privacy detection, carrier info) require
-        an IPINFO_API_TOKEN environment variable with a paid API plan.
-        Basic location and ISP info works without authentication.
+    Note: Requires IPINFO_API_TOKEN with residential proxy data access.
     """
+    handler, _ = _get_handler_and_cache(ctx)
 
-    ctx.info(f"Getting details for IP address {ip}")
+    # Validate IP
+    _validate_ip(ip)
 
-    if "IPINFO_API_TOKEN" not in os.environ:
-        ctx.warning("IPINFO_API_TOKEN is not set")
-
-    if ip in ("null", "", "undefined", "0.0.0.0", "::"):
-        ip = None
-
-    # If IP address given, check cache first
-    if ip and (cached := cache.get(ip)):
-        ctx.debug(f"Returning cached result for {ip}")
-        return cached
-
-    if ip:
-        try:
-            parsed_ip = ipaddress.ip_address(ip)
-
-            if parsed_ip.is_private:
-                raise ToolError(
-                    f"{ip} is a private IP address. Geolocation may not be meaningful."
-                )
-            elif parsed_ip.is_loopback:
-                raise ToolError(
-                    f"{ip} is a loopback IP address. Geolocation may not be meaningful."
-                )
-            elif parsed_ip.is_multicast:
-                raise ToolError(
-                    f"{ip} is a multicast IP address. Geolocation may not be meaningful."
-                )
-            elif parsed_ip.is_reserved:
-                raise ToolError(
-                    f"{ip} is a reserved IP address. Geolocation may not be meaningful."
-                )
-        except ValueError:
-            ctx.error(f"Got an invalid IP address: {ip}")
-            raise ToolError(f"{ip} is not a valid IP address")
+    await ctx.info(f"Checking residential proxy status for {ip}")
 
     try:
-        result = ipinfo_lookup(ip)
-        cache.set(result.ip, result)
+        result = await ipinfo_resproxy_lookup(handler, ip)
         return result
     except Exception as e:
-        ctx.error(f"Failed to look up IP details: {str(e)}")
-        raise ToolError(f"Lookup failed for IP address {str(e)}")
+        await ctx.error(f"Residential proxy lookup failed: {e}")
+        raise ToolError(f"Residential proxy lookup failed: {e}")
 
 
-@mcp.tool()
-def get_ipinfo_api_token(ctx: Context) -> str | None:
-    """Check if the IPINFO_API_TOKEN environment variable is configured for enhanced IP lookups.
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+    }
+)
+async def get_map_url(
+    ips: Annotated[
+        list[str],
+        Field(
+            description="List of IP addresses to visualize on a map (IPv4 or IPv6). Maximum 500,000 IPs.",
+            min_length=1,
+            examples=[["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
+        ),
+    ],
+    ctx: Context = None,
+) -> str:
+    """Generate a URL to an interactive map visualization of IP addresses.
 
-    This tool verifies whether the IPInfo API token is properly configured in the environment.
-    The token enables access to premium features like ASN information, privacy detection,
-    carrier details, and enhanced accuracy for IP geolocation analysis.
+    Creates a map on ipinfo.io showing the geographic locations of the provided
+    IP addresses. The map is interactive and can be shared.
 
     Common use cases:
-    - Verify API token configuration before performing advanced IP analysis
-    - Troubleshoot why certain IP lookup features are unavailable
-    - Check system configuration for applications requiring premium IP data
-    - Validate environment setup during deployment or testing
-    - Determine available feature set for IP analysis workflows
+    - Visualize geographic distribution of server logs
+    - Create shareable maps of user locations
+    - Display IP address clusters for security analysis
+    - Geographic visualization of network traffic
 
-    Args:
-        ctx: The MCP request context.
+    Returns a URL to the interactive map that can be opened in a browser.
 
-    Returns:
-        bool: True if IPINFO_API_TOKEN environment variable is set and configured,
-              False if the token is missing or not configured.
-
-    Examples:
-        # Check if premium features are available
-        has_token = get_ipinfo_api_token()
-        if has_token:
-            # Safe to use advanced IP analysis features
-            details = get_ip_details("8.8.8.8")  # Will include ASN, privacy data
-        else:
-            # Limited to basic IP information only
-            details = get_ip_details("8.8.8.8")  # Basic location/ISP only
-
-        # Use in conditional workflows
-        if get_ipinfo_api_token():
-            # Perform advanced IP geolocation analysis
-            pass
-        else:
-            # Fall back to basic analysis or prompt for token configuration
-            pass
-
-    Note:
-        The IPInfo API provides basic location and ISP information without authentication,
-        but premium features (ASN details, VPN/proxy detection, carrier information,
-        enhanced accuracy) require a valid API token from https://ipinfo.io/.
+    Note: Invalid or special IPs (private, loopback, etc.) are filtered out.
     """
-    return os.environ.get("IPINFO_API_TOKEN")
+    # Validate and filter IPs
+    valid_ips = []
+    skipped = []
+
+    for ip in ips:
+        norm = _normalize_ip(ip)
+        if norm is None:
+            continue
+
+        try:
+            _validate_ip(norm)
+            valid_ips.append(norm)
+        except ToolError as e:
+            skipped.append((ip, str(e)))
+
+    # Log skipped IPs
+    for ip, reason in skipped:
+        await ctx.warning(f"Skipping {ip}: {reason}")
+
+    if not valid_ips:
+        raise ToolError("No valid IP addresses to map")
+
+    await ctx.info(f"Generating map for {len(valid_ips)} IP address(es)")
+
+    try:
+        url = await ipinfo_get_map_url(valid_ips)
+        await ctx.info("Map URL generated successfully")
+        return url
+    except Exception as e:
+        await ctx.error(f"Map generation failed: {e}")
+        raise ToolError(f"Map generation failed: {e}")

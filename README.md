@@ -41,17 +41,38 @@ Just add an additional `--from` argument:
 
 ### Tools
 
-- `get_ip_details`: This tool is used to get detailed information about an IP address.
-    - **Input:** `ip`: The IP address to get information about.
-    - **Output:** `IPDetails`: A Pydantic model containing detailed information about the IP, including location, organization, and country details.
+- `get_ip_details`: Get detailed information about one or more IP addresses including location, ISP, and network details.
+    - **Input:** `ips` (optional): List of IP addresses to analyze (IPv4 or IPv6). If not provided, analyzes the requesting client's IP address.
+    - **Output:** List of `IPDetails` containing location, organization, timezone, and more.
+    - **Note:** Batch lookups (multiple IPs) require `IPINFO_API_TOKEN`.
 
-### Resources   
+- `get_residential_proxy_info`: Check if an IP address is associated with a residential proxy service.
+    - **Input:** `ip`: The IP address to check for residential proxy usage.
+    - **Output:** `ResidentialProxyDetails` with proxy service name, last seen date, and activity percentage.
+    - **Note:** Requires `IPINFO_API_TOKEN` with residential proxy data access.
+
+- `get_map_url`: Generate a URL to an interactive map visualization of IP addresses.
+    - **Input:** `ips`: List of IP addresses to visualize (max 500,000).
+    - **Output:** URL to an interactive map on ipinfo.io showing geographic locations.
+    - **Note:** Useful for visualizing geographic distribution of traffic or users.
+
+### Resources
 
 _No custom resources are included_
 
 ### Prompts
 
 _No custom prompts are included_
+
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `IPINFO_API_TOKEN` | IPInfo API token for premium features | None (basic lookups only) |
+| `IPINFO_CACHE_TTL` | Cache TTL in seconds | 3600 (1 hour) |
 
 
 ## License
