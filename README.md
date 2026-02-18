@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/briandconnelly-mcp-server-ipinfo-badge.png)](https://mseep.ai/app/briandconnelly-mcp-server-ipinfo)
+
 # IP Geolocation MCP Server
 
 This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
