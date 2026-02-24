@@ -6,15 +6,21 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from mcp_server_ipinfo.server import (
+    _normalize_asn,
     _normalize_ip,
+    _validate_domain,
     _validate_ip,
+    get_asn_details as get_asn_details_tool,
     get_ip_details as get_ip_details_tool,
+    get_ip_ranges as get_ip_ranges_tool,
     get_map_url as get_map_url_tool,
     get_residential_proxy_info as get_residential_proxy_info_tool,
 )
 
 # Access underlying functions from FunctionTool wrappers
+get_asn_details = get_asn_details_tool.fn
 get_ip_details = get_ip_details_tool.fn
+get_ip_ranges = get_ip_ranges_tool.fn
 get_map_url = get_map_url_tool.fn
 get_residential_proxy_info = get_residential_proxy_info_tool.fn
 
@@ -307,3 +313,220 @@ class TestGetMapUrl:
 
             with pytest.raises(ToolError, match="Map generation failed"):
                 await get_map_url(ips=["8.8.8.8"], ctx=mock_context)
+
+
+class TestNormalizeASN:
+    """Tests for _normalize_asn helper function."""
+
+    def test_uppercase_prefix(self):
+        """Test 'AS7922' format."""
+        assert _normalize_asn("AS7922") == "AS7922"
+
+    def test_lowercase_prefix(self):
+        """Test 'as7922' format."""
+        assert _normalize_asn("as7922") == "AS7922"
+
+    def test_number_only(self):
+        """Test '7922' format (no prefix)."""
+        assert _normalize_asn("7922") == "AS7922"
+
+    def test_with_whitespace(self):
+        """Test input with surrounding whitespace."""
+        assert _normalize_asn("  AS15169  ") == "AS15169"
+
+    def test_invalid_non_numeric(self):
+        """Test invalid ASN with non-numeric characters."""
+        with pytest.raises(ToolError, match="not a valid ASN"):
+            _normalize_asn("ASabc")
+
+    def test_invalid_empty(self):
+        """Test invalid empty ASN."""
+        with pytest.raises(ToolError, match="not a valid ASN"):
+            _normalize_asn("AS")
+
+    def test_invalid_garbage(self):
+        """Test completely invalid input."""
+        with pytest.raises(ToolError, match="not a valid ASN"):
+            _normalize_asn("not-an-asn")
+
+
+class TestValidateDomain:
+    """Tests for _validate_domain helper function."""
+
+    def test_valid_domain(self):
+        """Test a valid domain."""
+        assert _validate_domain("google.com") == "google.com"
+
+    def test_valid_subdomain(self):
+        """Test a valid subdomain."""
+        assert _validate_domain("www.google.com") == "www.google.com"
+
+    def test_uppercase_normalized(self):
+        """Test that domains are lowercased."""
+        assert _validate_domain("Google.COM") == "google.com"
+
+    def test_with_whitespace(self):
+        """Test that whitespace is stripped."""
+        assert _validate_domain("  google.com  ") == "google.com"
+
+    def test_no_dot(self):
+        """Test domain without a dot."""
+        with pytest.raises(ToolError, match="not appear to be a valid domain"):
+            _validate_domain("localhost")
+
+    def test_empty(self):
+        """Test empty domain."""
+        with pytest.raises(ToolError, match="must not be empty"):
+            _validate_domain("")
+
+    def test_invalid_characters(self):
+        """Test domain with invalid characters."""
+        with pytest.raises(ToolError, match="not appear to be a valid domain"):
+            _validate_domain("goo gle.com")
+
+
+class TestGetASNDetails:
+    """Tests for get_asn_details tool."""
+
+    @pytest.fixture
+    def mock_asn_response(self):
+        """Create a mock httpx response for ASN lookup."""
+        from unittest.mock import MagicMock
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "asn": "AS15169",
+            "name": "Google LLC",
+            "country": "US",
+            "allocated": "2000-03-30",
+            "registry": "arin",
+            "domain": "google.com",
+            "num_ips": 17574144,
+            "type": "hosting",
+            "prefixes": [
+                {
+                    "netblock": "8.8.8.0/24",
+                    "id": "AS15169",
+                    "name": "Google LLC",
+                    "country": "US",
+                }
+            ],
+            "prefixes6": [
+                {
+                    "netblock": "2001:4860::/32",
+                    "id": "AS15169",
+                    "name": "Google LLC",
+                    "country": "US",
+                }
+            ],
+        }
+        mock_response.raise_for_status = MagicMock()
+        return mock_response
+
+    async def test_valid_asn_lookup(self, mock_context, mock_asn_response):
+        """Test looking up a valid ASN."""
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_asn_response
+            )
+
+            result = await get_asn_details(asn="AS15169", ctx=mock_context)
+
+            assert result.asn == "AS15169"
+            assert result.name == "Google LLC"
+            assert result.country == "US"
+            assert len(result.prefixes) == 1
+            assert result.prefixes[0].netblock == "8.8.8.0/24"
+            assert len(result.prefixes6) == 1
+
+    async def test_lowercase_asn_input(self, mock_context, mock_asn_response):
+        """Test that lowercase ASN input is normalized."""
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_get = AsyncMock(return_value=mock_asn_response)
+            mock_client.return_value.__aenter__.return_value.get = mock_get
+
+            await get_asn_details(asn="as15169", ctx=mock_context)
+
+            # Verify the URL used the normalized ASN
+            call_args = mock_get.call_args
+            assert "AS15169" in call_args[0][0]
+
+    async def test_number_only_input(self, mock_context, mock_asn_response):
+        """Test that number-only ASN input is normalized."""
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_get = AsyncMock(return_value=mock_asn_response)
+            mock_client.return_value.__aenter__.return_value.get = mock_get
+
+            await get_asn_details(asn="15169", ctx=mock_context)
+
+            call_args = mock_get.call_args
+            assert "AS15169" in call_args[0][0]
+
+    async def test_invalid_asn(self, mock_context):
+        """Test that invalid ASN raises ToolError."""
+        with pytest.raises(ToolError, match="not a valid ASN"):
+            await get_asn_details(asn="not-an-asn", ctx=mock_context)
+
+    async def test_api_error_handling(self, mock_context):
+        """Test handling of API errors."""
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_get = AsyncMock(side_effect=Exception("API error"))
+            mock_client.return_value.__aenter__.return_value.get = mock_get
+
+            with pytest.raises(ToolError, match="ASN lookup failed"):
+                await get_asn_details(asn="AS15169", ctx=mock_context)
+
+
+class TestGetIPRanges:
+    """Tests for get_ip_ranges tool."""
+
+    @pytest.fixture
+    def mock_ranges_response(self):
+        """Create a mock httpx response for IP ranges lookup."""
+        from unittest.mock import MagicMock
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "domain": "google.com",
+            "num_ranges": 3,
+            "ranges": [
+                "8.8.4.0/24",
+                "8.8.8.0/24",
+                "8.34.208.0/20",
+            ],
+        }
+        mock_response.raise_for_status = MagicMock()
+        return mock_response
+
+    async def test_valid_domain_lookup(self, mock_context, mock_ranges_response):
+        """Test looking up IP ranges for a valid domain."""
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_ranges_response
+            )
+
+            result = await get_ip_ranges(domain="google.com", ctx=mock_context)
+
+            assert result.domain == "google.com"
+            assert result.num_ranges == 3
+            assert len(result.ranges) == 3
+            assert "8.8.8.0/24" in result.ranges
+
+    async def test_invalid_domain(self, mock_context):
+        """Test that invalid domain raises ToolError."""
+        with pytest.raises(ToolError, match="not appear to be a valid domain"):
+            await get_ip_ranges(domain="not-a-domain", ctx=mock_context)
+
+    async def test_empty_domain(self, mock_context):
+        """Test that empty domain raises ToolError."""
+        with pytest.raises(ToolError, match="must not be empty"):
+            await get_ip_ranges(domain="", ctx=mock_context)
+
+    async def test_api_error_handling(self, mock_context):
+        """Test handling of API errors."""
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_get = AsyncMock(side_effect=Exception("API error"))
+            mock_client.return_value.__aenter__.return_value.get = mock_get
+
+            with pytest.raises(ToolError, match="IP ranges lookup failed"):
+                await get_ip_ranges(domain="google.com", ctx=mock_context)
