@@ -163,6 +163,96 @@ class CountryCurrencyDetails(BaseModel):
     """Currency symbol (e.g., '$', '€', '£')"""
 
 
+class ASNPrefix(BaseModel):
+    """
+    An IPv4 or IPv6 prefix announced by an ASN.
+
+    Represents a network block (CIDR) that is part of an ASN's routing announcements.
+    """
+
+    netblock: str
+    """CIDR notation of the prefix (e.g., '8.8.8.0/24')"""
+
+    id: str
+    """ASN identifier (e.g., 'AS15169')"""
+
+    name: str
+    """Organization name"""
+
+    country: str
+    """Two-letter ISO 3166-1 alpha-2 country code"""
+
+
+class ASNInfo(BaseModel):
+    """
+    Full ASN (Autonomous System Number) lookup response.
+
+    Contains details about an ASN including the organization, registry,
+    and announced IPv4/IPv6 prefixes.
+
+    Available via the IPInfo ASN API endpoint: /AS{number}/json
+    """
+
+    asn: str
+    """The ASN identifier (e.g., 'AS15169')"""
+
+    name: str | None = None
+    """The organization name (e.g., 'Google LLC')"""
+
+    country: str | None = None
+    """Two-letter ISO 3166-1 alpha-2 country code"""
+
+    allocated: str | None = None
+    """Date the ASN was allocated (e.g., '1992-12-01')"""
+
+    registry: str | None = None
+    """Regional internet registry (e.g., 'arin', 'ripencc', 'apnic')"""
+
+    domain: str | None = None
+    """The primary domain of the organization"""
+
+    num_ips: int | None = None
+    """Total number of IP addresses announced by this ASN"""
+
+    type: str | None = None
+    """Organization type: 'isp', 'hosting', 'business', 'education', or 'government'"""
+
+    prefixes: list[ASNPrefix] | None = None
+    """IPv4 prefixes announced by this ASN"""
+
+    prefixes6: list[ASNPrefix] | None = None
+    """IPv6 prefixes announced by this ASN"""
+
+    ts_retrieved: str | None = None
+    """Timestamp when this information was retrieved (UTC ISO format)"""
+
+
+class IPRangesInfo(BaseModel):
+    """
+    IP ranges lookup response for a domain.
+
+    Contains the IP address ranges (CIDR blocks) associated with a given domain.
+
+    Available via the IPInfo Ranges API endpoint: /ranges/{domain}
+    Requires an IPInfo Enterprise plan.
+    """
+
+    domain: str
+    """The domain that was looked up"""
+
+    redirects_to: str | None = None
+    """If the domain redirects, the target domain"""
+
+    num_ranges: int | None = None
+    """Total number of IP ranges associated with the domain"""
+
+    ranges: list[str] | None = None
+    """List of CIDR blocks associated with the domain"""
+
+    ts_retrieved: str | None = None
+    """Timestamp when this information was retrieved (UTC ISO format)"""
+
+
 class ResidentialProxyDetails(BaseModel):
     """
     Residential proxy detection information.
