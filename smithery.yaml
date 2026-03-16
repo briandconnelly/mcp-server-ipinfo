@@ -1,0 +1,23 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - ipinfoApiToken
+    properties:
+      ipinfoApiToken:
+        type: string
+        description: Your IPInfo API Token obtained from ipinfo.io
+  commandFunction:
+    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
+    |-
+    (config) => ({
+      command: 'mcp-server-ipinfo',
+      args: [],
+      env: { IPINFO_API_TOKEN: config.ipinfoApiToken }
+    })
+  exampleConfig:
+    ipinfoApiToken: YOUR_FAKE_TOKEN
