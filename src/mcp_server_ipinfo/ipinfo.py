@@ -5,7 +5,7 @@ from ipaddress import IPv4Address, IPv6Address
 import httpx
 import ipinfo
 
-from .models import IPDetails, ResidentialProxyDetails
+from .models import ASNInfo, IPDetails, IPRangesInfo, ResidentialProxyDetails
 
 IPINFO_API_URL = "https://ipinfo.io"
 
@@ -103,6 +103,56 @@ async def ipinfo_resproxy_lookup(
         **details.all,
         ts_retrieved=str(datetime.now(timezone.utc)),
     )
+
+
+async def ipinfo_asn_lookup(asn: str) -> ASNInfo:
+    """
+    Look up detailed information about an Autonomous System Number (ASN).
+
+    Args:
+        asn: The ASN to look up (e.g., "AS15169"). Must already be in "AS{number}" format.
+
+    Returns:
+        ASNInfo with details about the ASN including prefixes.
+
+    Raises:
+        httpx.HTTPStatusError: If the API request fails.
+    """
+    token = os.environ.get("IPINFO_API_TOKEN")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{IPINFO_API_URL}/{asn}/json",
+            params={"token": token} if token else {},
+            headers={"user-agent": "mcp-server-ipinfo"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return ASNInfo(**data, ts_retrieved=str(datetime.now(timezone.utc)))
+
+
+async def ipinfo_ranges_lookup(domain: str) -> IPRangesInfo:
+    """
+    Look up IP address ranges associated with a domain.
+
+    Args:
+        domain: The domain to look up (e.g., "google.com").
+
+    Returns:
+        IPRangesInfo with the domain's IP ranges.
+
+    Raises:
+        httpx.HTTPStatusError: If the API request fails.
+    """
+    token = os.environ.get("IPINFO_API_TOKEN")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{IPINFO_API_URL}/ranges/{domain}",
+            params={"token": token} if token else {},
+            headers={"user-agent": "mcp-server-ipinfo"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return IPRangesInfo(**data, ts_retrieved=str(datetime.now(timezone.utc)))
 
 
 async def ipinfo_get_map_url(ips: list[str | IPv4Address | IPv6Address]) -> str:

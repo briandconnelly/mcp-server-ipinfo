@@ -3,7 +3,13 @@
 import pytest
 from pydantic import ValidationError
 
-from mcp_server_ipinfo.models import IPDetails, ResidentialProxyDetails
+from mcp_server_ipinfo.models import (
+    ASNInfo,
+    ASNPrefix,
+    IPDetails,
+    IPRangesInfo,
+    ResidentialProxyDetails,
+)
 
 
 class TestIPDetails:
@@ -139,3 +145,100 @@ class TestResidentialProxyDetails:
         assert details.last_seen is None
         assert details.percent_days_seen is None
         assert details.service is None
+
+
+class TestASNInfo:
+    """Tests for ASNInfo model."""
+
+    def test_valid_construction(self, sample_asn_info):
+        """Test creating ASNInfo with all fields populated."""
+        assert sample_asn_info.asn == "AS15169"
+        assert sample_asn_info.name == "Google LLC"
+        assert sample_asn_info.country == "US"
+        assert sample_asn_info.allocated == "2000-03-30"
+        assert sample_asn_info.registry == "arin"
+        assert sample_asn_info.domain == "google.com"
+        assert sample_asn_info.num_ips == 17574144
+        assert sample_asn_info.type == "hosting"
+
+    def test_optional_fields(self):
+        """Test ASNInfo with only required field."""
+        info = ASNInfo(asn="AS7922")
+        assert info.asn == "AS7922"
+        assert info.name is None
+        assert info.country is None
+        assert info.allocated is None
+        assert info.registry is None
+        assert info.domain is None
+        assert info.num_ips is None
+        assert info.type is None
+        assert info.prefixes is None
+        assert info.prefixes6 is None
+        assert info.ts_retrieved is None
+
+    def test_prefix_nesting(self, sample_asn_info):
+        """Test that prefixes are properly nested as ASNPrefix objects."""
+        assert len(sample_asn_info.prefixes) == 2
+        assert sample_asn_info.prefixes[0].netblock == "8.8.4.0/24"
+        assert sample_asn_info.prefixes[0].id == "AS15169"
+        assert sample_asn_info.prefixes[0].name == "Google LLC"
+        assert sample_asn_info.prefixes[0].country == "US"
+
+        assert len(sample_asn_info.prefixes6) == 1
+        assert sample_asn_info.prefixes6[0].netblock == "2001:4860::/32"
+
+    def test_from_dict(self):
+        """Test constructing ASNInfo from a dict (simulating API response)."""
+        data = {
+            "asn": "AS13335",
+            "name": "Cloudflare, Inc.",
+            "country": "US",
+            "registry": "arin",
+            "domain": "cloudflare.com",
+            "num_ips": 1524736,
+            "type": "hosting",
+            "prefixes": [
+                {
+                    "netblock": "1.1.1.0/24",
+                    "id": "AS13335",
+                    "name": "Cloudflare, Inc.",
+                    "country": "US",
+                }
+            ],
+        }
+        info = ASNInfo(**data)
+        assert info.asn == "AS13335"
+        assert len(info.prefixes) == 1
+        assert info.prefixes[0].netblock == "1.1.1.0/24"
+
+
+class TestIPRangesInfo:
+    """Tests for IPRangesInfo model."""
+
+    def test_valid_construction(self, sample_ip_ranges_info):
+        """Test creating IPRangesInfo with all fields populated."""
+        assert sample_ip_ranges_info.domain == "google.com"
+        assert sample_ip_ranges_info.num_ranges == 3
+        assert len(sample_ip_ranges_info.ranges) == 3
+        assert "8.8.8.0/24" in sample_ip_ranges_info.ranges
+
+    def test_optional_fields(self):
+        """Test IPRangesInfo with only required field."""
+        info = IPRangesInfo(domain="example.com")
+        assert info.domain == "example.com"
+        assert info.redirects_to is None
+        assert info.num_ranges is None
+        assert info.ranges is None
+        assert info.ts_retrieved is None
+
+    def test_with_redirect(self):
+        """Test IPRangesInfo with redirect field."""
+        info = IPRangesInfo(
+            domain="www.google.com",
+            redirects_to="google.com",
+            num_ranges=0,
+            ranges=[],
+        )
+        assert info.redirects_to == "google.com"
+        assert info.num_ranges == 0
+        assert info.ranges == []

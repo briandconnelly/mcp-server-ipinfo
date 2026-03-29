@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from mcp_server_ipinfo.cache import IPInfoCache
-from mcp_server_ipinfo.models import IPDetails, ResidentialProxyDetails
+from mcp_server_ipinfo.models import (
+    ASNInfo,
+    ASNPrefix,
+    IPDetails,
+    IPRangesInfo,
+    ResidentialProxyDetails,
+)
 
 
 def create_mock_details(ip: str, **kwargs) -> MagicMock:
@@ -103,6 +109,59 @@ def sample_residential_proxy_details() -> ResidentialProxyDetails:
         last_seen="2024-01-15",
         percent_days_seen=85.7,
         service="Luminati",
+        ts_retrieved=str(datetime.now(timezone.utc)),
+    )
+
+
+@pytest.fixture
+def sample_asn_info() -> ASNInfo:
+    """Create a sample ASNInfo object."""
+    return ASNInfo(
+        asn="AS15169",
+        name="Google LLC",
+        country="US",
+        allocated="2000-03-30",
+        registry="arin",
+        domain="google.com",
+        num_ips=17574144,
+        type="hosting",
+        prefixes=[
+            ASNPrefix(
+                netblock="8.8.4.0/24",
+                id="AS15169",
+                name="Google LLC",
+                country="US",
+            ),
+            ASNPrefix(
+                netblock="8.8.8.0/24",
+                id="AS15169",
+                name="Google LLC",
+                country="US",
+            ),
+        ],
+        prefixes6=[
+            ASNPrefix(
+                netblock="2001:4860::/32",
+                id="AS15169",
+                name="Google LLC",
+                country="US",
+            ),
+        ],
+        ts_retrieved=str(datetime.now(timezone.utc)),
+    )
+
+
+@pytest.fixture
+def sample_ip_ranges_info() -> IPRangesInfo:
+    """Create a sample IPRangesInfo object."""
+    return IPRangesInfo(
+        domain="google.com",
+        num_ranges=3,
+        ranges=[
+            "8.8.4.0/24",
+            "8.8.8.0/24",
+            "8.34.208.0/20",
+        ],
         ts_retrieved=str(datetime.now(timezone.utc)),
     )
 

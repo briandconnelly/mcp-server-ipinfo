@@ -11,12 +11,14 @@ from pydantic import Field
 from .cache import IPInfoCache
 from .ipinfo import (
     create_async_handler,
+    ipinfo_asn_lookup,
     ipinfo_batch_lookup,
     ipinfo_get_map_url,
     ipinfo_lookup,
+    ipinfo_ranges_lookup,
     ipinfo_resproxy_lookup,
 )
-from .models import IPDetails, ResidentialProxyDetails
+from .models import ASNInfo, IPDetails, IPRangesInfo, ResidentialProxyDetails
 
 
 @asynccontextmanager
@@ -43,6 +45,8 @@ mcp = FastMCP(
     - get_ip_details: Look up details for one or more IP addresses
     - get_residential_proxy_info: Check if an IP is a residential proxy
     - get_map_url: Generate an interactive map URL showing IP locations
+    - get_asn_details: Look up details about an Autonomous System Number (ASN)
+    - get_ip_ranges: Look up IP address ranges associated with a domain
 
     The IPInfo API is free to use with rate limits. Paid plans provide more information.
     Set the IPINFO_API_TOKEN environment variable with a valid API key for premium features.
@@ -342,3 +346,145 @@ async def get_map_url(
     except Exception as e:
         await ctx.error(f"Map generation failed: {e}")
         raise ToolError(f"Map generation failed: {e}")
+
+
+def _normalize_asn(asn: str) -> str:
+    """
+    Normalize an ASN input to 'AS{number}' format.
+
+    Accepts formats like 'AS7922', 'as7922', '7922'.
+
+    Args:
+        asn: The ASN string to normalize.
+
+    Returns:
+        Normalized ASN string in 'AS{number}' format.
+
+    Raises:
+        ToolError: If the input is not a valid ASN.
+    """
+    cleaned = asn.strip().upper()
+    if cleaned.startswith("AS"):
+        number_part = cleaned[2:]
+    else:
+        number_part = cleaned
+
+    if not number_part.isdigit() or not number_part:
+        raise ToolError(
+            f"'{asn}' is not a valid ASN. Expected format: 'AS7922', 'as7922', or '7922'."
+        )
+
+    return f"AS{number_part}"
+
+
+def _validate_domain(domain: str) -> str:
+    """
+    Validate and normalize a domain name.
+
+    Args:
+        domain: The domain string to validate.
+
+    Returns:
+        The cleaned domain string.
+
+    Raises:
+        ToolError: If the domain format is invalid.
+    """
+    cleaned = domain.strip().lower()
+    if not cleaned:
+        raise ToolError("Domain must not be empty.")
+
+    # Basic domain format check: at least one dot and only valid characters
+    if "." not in cleaned:
+        raise ToolError(
+            f"'{domain}' does not appear to be a valid domain. Expected format: 'example.com'."
+        )
+
+    import re
+
+    if not re.match(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$", cleaned):
+        raise ToolError(
+            f"'{domain}' does not appear to be a valid domain. Expected format: 'example.com'."
+        )
+
+    return cleaned
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+    }
+)
+async def get_asn_details(
+    asn: Annotated[
+        str,
+        Field(
+            description="The Autonomous System Number to look up. Accepts formats like 'AS7922', 'as7922', or '7922'.",
+            examples=["AS15169", "as7922", "13335"],
+        ),
+    ],
+    ctx: Context = None,
+) -> ASNInfo:
+    """Get detailed information about an Autonomous System Number (ASN).
+
+    Returns information about the ASN including the organization name, country,
+    registry, number of IPs, and announced IPv4/IPv6 prefixes.
+
+    Common use cases:
+    - Network analysis and peering investigation
+    - Enumerating prefixes announced by an organization
+    - Identifying the type (ISP, hosting, business, etc.) of a network
+    - Looking up allocation date and regional registry
+
+    Note: Requires IPINFO_API_TOKEN environment variable.
+    """
+    normalized = _normalize_asn(asn)
+    await ctx.info(f"Looking up ASN details for {normalized}")
+
+    try:
+        result = await ipinfo_asn_lookup(normalized)
+        return result
+    except Exception as e:
+        await ctx.error(f"ASN lookup failed: {e}")
+        raise ToolError(f"ASN lookup failed: {e}")
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+    }
+)
+async def get_ip_ranges(
+    domain: Annotated[
+        str,
+        Field(
+            description="The domain to look up IP ranges for (e.g., 'google.com').",
+            examples=["google.com", "cloudflare.com"],
+        ),
+    ],
+    ctx: Context = None,
+) -> IPRangesInfo:
+    """Get IP address ranges associated with a domain.
+
+    Returns the CIDR blocks (IP ranges) that are associated with the given domain,
+    based on IPInfo's data.
+
+    Common use cases:
+    - Identifying all IP ranges used by an organization
+    - Building firewall rules or allowlists
+    - Network reconnaissance and security analysis
+    - Understanding an organization's IP footprint
+
+    Note: Requires IPINFO_API_TOKEN with an Enterprise plan.
+    """
+    validated_domain = _validate_domain(domain)
+    await ctx.info(f"Looking up IP ranges for {validated_domain}")
+
+    try:
+        result = await ipinfo_ranges_lookup(validated_domain)
+        return result
+    except Exception as e:
+        await ctx.error(f"IP ranges lookup failed: {e}")
+        raise ToolError(f"IP ranges lookup failed: {e}")
