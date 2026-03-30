@@ -37,6 +37,10 @@ Just add an additional `--from` argument:
 | **Environment** | `IPINFO_API_TOKEN` = `<YOUR TOKEN>` |
 
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/briandconnelly-mcp-server-ipinfo).
+
 ## Components
 
 ### Tools
