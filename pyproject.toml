@@ -33,6 +33,7 @@ dev = [
     "prek>=0.3.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.11.0",
     "time-machine>=2.16.0",
     "ty>=0.0.1a7",
@@ -56,3 +57,11 @@ exclude = ["tests/"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+addopts = "--cov=mcp_server_ipinfo --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/mcp_server_ipinfo"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
