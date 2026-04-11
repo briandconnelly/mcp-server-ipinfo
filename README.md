@@ -1,10 +1,11 @@
 # IP Geolocation MCP Server
 
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-ipinfo)](https://pypi.org/project/mcp-server-ipinfo/)
+[![CI](https://github.com/briandconnelly/mcp-server-ipinfo/actions/workflows/checks.yml/badge.svg)](https://github.com/briandconnelly/mcp-server-ipinfo/actions/workflows/checks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
-This can be used to determine where the user is located (approximately) and what network they are used.
+This can be used to determine where the user is located (approximately) and what network they are using.
 
 ![Example conversation using mcp-server-ipinfo](demo.png)
 
@@ -55,15 +56,6 @@ Just add an additional `--from` argument:
     - **Output:** URL to an interactive map on ipinfo.io showing geographic locations.
     - **Note:** Useful for visualizing geographic distribution of traffic or users.
 
-### Resources
-
-_No custom resources are included_
-
-### Prompts
-
-_No custom prompts are included_
-
-
 ## Configuration
 
 ### Environment Variables
@@ -76,7 +68,7 @@ _No custom prompts are included_
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file for details.
+MIT License - See [LICENSE](LICENSE) file for details. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Disclaimer
 
