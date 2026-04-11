@@ -1,4 +1,16 @@
 [[repos]]
+repo = "builtin"
+hooks = [
+  { id = "check-added-large-files" },
+  { id = "check-merge-conflict" },
+  { id = "check-toml" },
+  { id = "check-yaml" },
+  { id = "detect-private-key" },
+  { id = "end-of-file-fixer" },
+  { id = "trailing-whitespace" },
+]
+
+[[repos]]
 repo = "https://github.com/astral-sh/uv-pre-commit"
 rev = "0.11.6"
 hooks = [{ id = "uv-lock" }]
