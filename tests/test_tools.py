@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
-
 from mcp_server_ipinfo.server import (
     _normalize_ip,
     _validate_ip,
@@ -18,95 +17,92 @@ from mcp_server_ipinfo.server import (
 class TestValidateIP:
     """Tests for _validate_ip helper function."""
 
-    def test_valid_public_ipv4(self):
+    @pytest.mark.parametrize(
+        "ip",
+        ["8.8.8.8", "1.1.1.1", "208.67.222.222"],
+        ids=["google-dns", "cloudflare", "opendns"],
+    )
+    def test_valid_public_ipv4(self, ip):
         """Test valid public IPv4 addresses."""
-        result = _validate_ip("8.8.8.8")
-        assert str(result) == "8.8.8.8"
+        result = _validate_ip(ip)
+        assert str(result) == ip
 
-    def test_valid_public_ipv6(self):
+    @pytest.mark.parametrize(
+        "ip",
+        ["2001:4860:4860::8888", "2606:4700:4700::1111"],
+        ids=["google-dns-v6", "cloudflare-v6"],
+    )
+    def test_valid_public_ipv6(self, ip):
         """Test valid public IPv6 addresses."""
-        result = _validate_ip("2001:4860:4860::8888")
-        assert str(result) == "2001:4860:4860::8888"
+        result = _validate_ip(ip)
+        assert str(result) == ip
 
-    def test_invalid_ip(self):
-        """Test invalid IP address format."""
+    @pytest.mark.parametrize("ip", ["not-an-ip", "999.999.999.999", "abc"])
+    def test_invalid_ip(self, ip):
+        """Test invalid IP address formats."""
         with pytest.raises(ToolError, match="not a valid IP address"):
-            _validate_ip("not-an-ip")
+            _validate_ip(ip)
 
-    def test_private_ipv4(self):
+    @pytest.mark.parametrize("ip", ["192.168.1.1", "10.0.0.1", "172.16.0.1"])
+    def test_private_ipv4(self, ip):
         """Test private IPv4 addresses are rejected."""
         with pytest.raises(ToolError, match="private IP address"):
-            _validate_ip("192.168.1.1")
+            _validate_ip(ip)
 
-        with pytest.raises(ToolError, match="private IP address"):
-            _validate_ip("10.0.0.1")
-
-        with pytest.raises(ToolError, match="private IP address"):
-            _validate_ip("172.16.0.1")
-
-    def test_loopback_ipv4(self):
+    @pytest.mark.parametrize("ip", ["127.0.0.1", "::1"])
+    def test_loopback(self, ip):
         """Test loopback addresses are rejected."""
         with pytest.raises(ToolError, match="loopback IP address"):
-            _validate_ip("127.0.0.1")
+            _validate_ip(ip)
 
-    def test_loopback_ipv6(self):
-        """Test IPv6 loopback is rejected."""
-        with pytest.raises(ToolError, match="loopback IP address"):
-            _validate_ip("::1")
-
-    def test_multicast(self):
+    @pytest.mark.parametrize("ip", ["224.0.0.1", "ff02::1"])
+    def test_multicast(self, ip):
         """Test multicast addresses are rejected."""
         with pytest.raises(ToolError, match="multicast IP address"):
-            _validate_ip("224.0.0.1")
+            _validate_ip(ip)
+
+    @pytest.mark.parametrize("ip", ["169.254.1.1", "fe80::1"])
+    def test_link_local(self, ip):
+        """Test link-local addresses are rejected."""
+        with pytest.raises(ToolError, match="link-local IP address"):
+            _validate_ip(ip)
 
     def test_reserved(self):
         """Test reserved addresses are rejected."""
         with pytest.raises(ToolError, match="reserved IP address"):
             _validate_ip("240.0.0.1")
 
-    def test_link_local_ipv4(self):
-        """Test link-local IPv4 addresses are rejected."""
-        with pytest.raises(ToolError, match="link-local IP address"):
-            _validate_ip("169.254.1.1")
-
-    def test_link_local_ipv6(self):
-        """Test link-local IPv6 addresses are rejected."""
-        with pytest.raises(ToolError, match="link-local IP address"):
-            _validate_ip("fe80::1")
-
 
 class TestNormalizeIP:
     """Tests for _normalize_ip helper function."""
 
-    def test_normal_ip(self):
-        """Test normal IP passes through."""
-        assert _normalize_ip("8.8.8.8") == "8.8.8.8"
-
-    def test_null_string(self):
-        """Test 'null' is normalized to None."""
-        assert _normalize_ip("null") is None
-
-    def test_empty_string(self):
-        """Test empty string is normalized to None."""
-        assert _normalize_ip("") is None
-
-    def test_undefined(self):
-        """Test 'undefined' is normalized to None."""
-        assert _normalize_ip("undefined") is None
-
-    def test_zero_ipv4(self):
-        """Test 0.0.0.0 is normalized to None."""
-        assert _normalize_ip("0.0.0.0") is None
-
-    def test_zero_ipv6(self):
-        """Test :: is normalized to None."""
-        assert _normalize_ip("::") is None
-
-    def test_whitespace_stripped(self):
-        """Test whitespace is stripped before normalization."""
-        assert _normalize_ip("  8.8.8.8  ") == "8.8.8.8"
-        assert _normalize_ip("  ") is None
-        assert _normalize_ip(" null ") is None
+    @pytest.mark.parametrize(
+        ("input_ip", "expected"),
+        [
+            ("8.8.8.8", "8.8.8.8"),
+            ("  8.8.8.8  ", "8.8.8.8"),
+            ("null", None),
+            ("", None),
+            ("undefined", None),
+            ("0.0.0.0", None),
+            ("::", None),
+            ("  ", None),
+            (" null ", None),
+        ],
+        ids=[
+            "normal",
+            "whitespace",
+            "null",
+            "empty",
+            "undefined",
+            "zero-v4",
+            "zero-v6",
+            "spaces-only",
+            "padded-null",
+        ],
+    )
+    def test_normalize(self, input_ip, expected):
+        assert _normalize_ip(input_ip) == expected
 
 
 class TestGetIPDetails:
@@ -293,26 +289,31 @@ class TestGetMapUrl:
         mock_response.raise_for_status = MagicMock()
         return mock_response
 
-    async def test_generate_map_url(self, mock_context, mock_httpx_response):
+    async def test_generate_map_url(self, mock_context_with_state, mock_httpx_response):
         """Test generating a map URL for valid IPs."""
         with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_httpx_response
             )
 
-            url = await get_map_url(ips=["8.8.8.8", "1.1.1.1"], ctx=mock_context)
+            url = await get_map_url(
+                ips=["8.8.8.8", "1.1.1.1"], ctx=mock_context_with_state
+            )
 
             assert url == "https://ipinfo.io/map/demo/abc123"
-            mock_context.info.assert_called()
+            mock_context_with_state.info.assert_called()
 
-    async def test_filters_invalid_ips(self, mock_context, mock_httpx_response):
+    async def test_filters_invalid_ips(
+        self, mock_context_with_state, mock_httpx_response
+    ):
         """Test that invalid IPs are filtered with warnings."""
         with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
             mock_post = AsyncMock(return_value=mock_httpx_response)
             mock_client.return_value.__aenter__.return_value.post = mock_post
 
             url = await get_map_url(
-                ips=["8.8.8.8", "192.168.1.1", "1.1.1.1"], ctx=mock_context
+                ips=["8.8.8.8", "192.168.1.1", "1.1.1.1"],
+                ctx=mock_context_with_state,
             )
 
             assert url == "https://ipinfo.io/map/demo/abc123"
@@ -323,21 +324,26 @@ class TestGetMapUrl:
             assert len(sent_ips) == 2
 
             # Warning should be logged for skipped IP
-            mock_context.warning.assert_called()
+            mock_context_with_state.warning.assert_called()
 
-    async def test_all_invalid_ips_error(self, mock_context):
+    async def test_all_invalid_ips_error(self, mock_context_with_state):
         """Test error when all IPs are invalid."""
         with pytest.raises(ToolError, match="No valid IP addresses"):
-            await get_map_url(ips=["192.168.1.1", "10.0.0.1"], ctx=mock_context)
+            await get_map_url(
+                ips=["192.168.1.1", "10.0.0.1"], ctx=mock_context_with_state
+            )
 
-    async def test_filters_placeholder_values(self, mock_context, mock_httpx_response):
+    async def test_filters_placeholder_values(
+        self, mock_context_with_state, mock_httpx_response
+    ):
         """Test that placeholder values are filtered out."""
         with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
             mock_post = AsyncMock(return_value=mock_httpx_response)
             mock_client.return_value.__aenter__.return_value.post = mock_post
 
             url = await get_map_url(
-                ips=["8.8.8.8", "", "null", "undefined"], ctx=mock_context
+                ips=["8.8.8.8", "", "null", "undefined"],
+                ctx=mock_context_with_state,
             )
 
             assert url == "https://ipinfo.io/map/demo/abc123"
@@ -345,17 +351,17 @@ class TestGetMapUrl:
             sent_ips = call_args.kwargs.get("json") or call_args[1].get("json")
             assert sent_ips == ["8.8.8.8"]
 
-    async def test_api_error_handling(self, mock_context):
+    async def test_api_error_handling(self, mock_context_with_state):
         """Test handling of API errors."""
         with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
             mock_post = AsyncMock(side_effect=Exception("API error"))
             mock_client.return_value.__aenter__.return_value.post = mock_post
 
             with pytest.raises(ToolError, match="Map generation failed"):
-                await get_map_url(ips=["8.8.8.8"], ctx=mock_context)
+                await get_map_url(ips=["8.8.8.8"], ctx=mock_context_with_state)
 
-    async def test_too_many_ips_error(self, mock_context):
+    async def test_too_many_ips_error(self, mock_context_with_state):
         """Test error when too many IPs are provided."""
         ips = [f"1.1.1.{i % 256}" for i in range(500_001)]
         with pytest.raises(ToolError, match="Too many IPs"):
-            await get_map_url(ips=ips, ctx=mock_context)
+            await get_map_url(ips=ips, ctx=mock_context_with_state)
