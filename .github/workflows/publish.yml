@@ -16,7 +16,7 @@ jobs:
     environment: pypi
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --extra dev
       - run: uv run pytest
       - run: uv build
