@@ -200,7 +200,7 @@ class IPDetails(BaseModel):
     - IPinfo Enterprise: Adds domains, abuse contacts, WHOIS data
     """
 
-    ip: IPvAnyAddress = None  # type: ignore
+    ip: IPvAnyAddress
     """The IP address (IPv4 or IPv6)"""
 
     hostname: str | None = None

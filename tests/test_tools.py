@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
+
 from mcp_server_ipinfo.server import (
     _normalize_ip,
     _validate_ip,
@@ -63,6 +64,16 @@ class TestValidateIP:
         with pytest.raises(ToolError, match="reserved IP address"):
             _validate_ip("240.0.0.1")
 
+    def test_link_local_ipv4(self):
+        """Test link-local IPv4 addresses are rejected."""
+        with pytest.raises(ToolError, match="link-local IP address"):
+            _validate_ip("169.254.1.1")
+
+    def test_link_local_ipv6(self):
+        """Test link-local IPv6 addresses are rejected."""
+        with pytest.raises(ToolError, match="link-local IP address"):
+            _validate_ip("fe80::1")
+
 
 class TestNormalizeIP:
     """Tests for _normalize_ip helper function."""
@@ -90,6 +101,12 @@ class TestNormalizeIP:
     def test_zero_ipv6(self):
         """Test :: is normalized to None."""
         assert _normalize_ip("::") is None
+
+    def test_whitespace_stripped(self):
+        """Test whitespace is stripped before normalization."""
+        assert _normalize_ip("  8.8.8.8  ") == "8.8.8.8"
+        assert _normalize_ip("  ") is None
+        assert _normalize_ip(" null ") is None
 
 
 class TestGetIPDetails:
@@ -197,6 +214,40 @@ class TestGetIPDetails:
                 ips=["", "null", "undefined"], ctx=mock_context_with_state
             )
 
+    async def test_duplicate_ips_deduplicated(self, mock_context_with_state):
+        """Test that duplicate IPs are deduplicated."""
+        results = await get_ip_details(
+            ips=["8.8.8.8", "8.8.8.8", "8.8.8.8"], ctx=mock_context_with_state
+        )
+        assert len(results) == 1
+        assert str(results[0].ip) == "8.8.8.8"
+
+    async def test_whitespace_stripped(self, mock_context_with_state):
+        """Test that whitespace around IPs is stripped."""
+        results = await get_ip_details(ips=[" 8.8.8.8 "], ctx=mock_context_with_state)
+        assert len(results) == 1
+        assert str(results[0].ip) == "8.8.8.8"
+
+    async def test_api_failure(self, mock_context_with_state):
+        """Test that API failures raise ToolError."""
+        with patch(
+            "mcp_server_ipinfo.server.ipinfo_lookup",
+            side_effect=Exception("API error"),
+        ):
+            with pytest.raises(ToolError, match="Lookup failed"):
+                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+
+    async def test_batch_api_failure(self, mock_context_with_state):
+        """Test that batch API failures raise ToolError."""
+        with patch(
+            "mcp_server_ipinfo.server.ipinfo_batch_lookup",
+            side_effect=Exception("Batch API error"),
+        ):
+            with pytest.raises(ToolError, match="Lookup failed"):
+                await get_ip_details(
+                    ips=["8.8.8.8", "1.1.1.1"], ctx=mock_context_with_state
+                )
+
 
 class TestGetResidentialProxyInfo:
     """Tests for get_residential_proxy_info tool."""
@@ -302,3 +353,9 @@ class TestGetMapUrl:
 
             with pytest.raises(ToolError, match="Map generation failed"):
                 await get_map_url(ips=["8.8.8.8"], ctx=mock_context)
+
+    async def test_too_many_ips_error(self, mock_context):
+        """Test error when too many IPs are provided."""
+        ips = [f"1.1.1.{i % 256}" for i in range(500_001)]
+        with pytest.raises(ToolError, match="Too many IPs"):
+            await get_map_url(ips=ips, ctx=mock_context)

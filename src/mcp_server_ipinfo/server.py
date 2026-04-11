@@ -91,6 +91,10 @@ def _validate_ip(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
         raise ToolError(
             f"{ip} is a multicast IP address. Geolocation is not available."
         )
+    elif parsed_ip.is_link_local:
+        raise ToolError(
+            f"{ip} is a link-local IP address. Geolocation is not available."
+        )
     elif parsed_ip.is_reserved:
         raise ToolError(f"{ip} is a reserved IP address. Geolocation is not available.")
     elif parsed_ip.is_private:
@@ -100,7 +104,8 @@ def _validate_ip(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
 
 
 def _normalize_ip(ip: str) -> str | None:
-    """Normalize empty/placeholder IP values to None."""
+    """Normalize empty/placeholder IP values to None, stripping whitespace."""
+    ip = ip.strip()
     if ip in ("null", "", "undefined", "0.0.0.0", "::"):
         return None
     return ip
@@ -155,11 +160,13 @@ async def get_ip_details(
             await ctx.error(f"Failed to look up client IP: {e}")
             raise ToolError(f"Lookup failed: {e}")
 
-    # Normalize and filter IPs
+    # Normalize, deduplicate, and filter IPs
+    seen = set()
     normalized_ips = []
     for ip in ips:
         norm = _normalize_ip(ip)
-        if norm is not None:
+        if norm is not None and norm not in seen:
+            seen.add(norm)
             normalized_ips.append(norm)
 
     if not normalized_ips:
@@ -309,6 +316,12 @@ async def get_map_url(
 
     Note: Invalid or special IPs (private, loopback, etc.) are filtered out.
     """
+    MAX_MAP_IPS = 500_000
+    if len(ips) > MAX_MAP_IPS:
+        raise ToolError(
+            f"Too many IPs ({len(ips)}). Maximum is {MAX_MAP_IPS:,} for map generation."
+        )
+
     # Validate and filter IPs
     valid_ips = []
     skipped = []

@@ -144,3 +144,31 @@ class TestIPInfoCache:
         result = await cache.get("8.8.8.8")
         assert result.city == "New City"
         assert len(cache) == 1
+
+    async def test_max_size_eviction(self, sample_ip_details):
+        """Test that oldest entries are evicted when max_size is exceeded."""
+        cache = IPInfoCache(ttl_seconds=3600, max_size=3)
+
+        await cache.set("1.1.1.1", IPDetails(ip="1.1.1.1"))
+        await cache.set("2.2.2.2", IPDetails(ip="2.2.2.2"))
+        await cache.set("3.3.3.3", IPDetails(ip="3.3.3.3"))
+        assert len(cache) == 3
+
+        # Adding a 4th should evict the oldest (1.1.1.1)
+        await cache.set("4.4.4.4", IPDetails(ip="4.4.4.4"))
+        assert len(cache) == 3
+        assert await cache.get("1.1.1.1") is None
+        assert await cache.get("4.4.4.4") is not None
+
+    async def test_max_size_eviction_batch(self):
+        """Test that set_batch respects max_size."""
+        cache = IPInfoCache(ttl_seconds=3600, max_size=2)
+
+        await cache.set_batch(
+            {
+                "1.1.1.1": IPDetails(ip="1.1.1.1"),
+                "2.2.2.2": IPDetails(ip="2.2.2.2"),
+                "3.3.3.3": IPDetails(ip="3.3.3.3"),
+            }
+        )
+        assert len(cache) <= 2

@@ -128,14 +128,19 @@ async def ipinfo_get_map_url(ips: list[str | IPv4Address | IPv6Address]) -> str:
         else:
             ip_strs.append(str(ip))
 
+    headers = {
+        "content-type": "application/json",
+        "user-agent": "mcp-server-ipinfo",
+    }
+    token = os.environ.get("IPINFO_API_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{IPINFO_API_URL}/map?cli=1",
             json=ip_strs,
-            headers={
-                "content-type": "application/json",
-                "user-agent": "mcp-server-ipinfo",
-            },
+            headers=headers,
         )
         response.raise_for_status()
         return response.json()["reportUrl"]
