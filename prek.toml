@@ -22,3 +22,9 @@ hooks = [
   { id = "ruff-check", args = ["--fix"] },
   { id = "ruff-format" },
 ]
+
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "ty-check", name = "ty check", language = "system", entry = "uv run ty check", pass_filenames = false, types = ["python"] },
+]

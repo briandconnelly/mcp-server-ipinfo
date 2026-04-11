@@ -5,6 +5,7 @@ from typing import Annotated
 
 import ipinfo
 from fastmcp import Context, FastMCP
+from fastmcp.dependencies import CurrentContext
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
@@ -157,7 +158,7 @@ async def get_ip_details(
             examples=[["8.8.8.8"], ["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
         ),
     ] = None,
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> list[IPDetails]:
     """Get detailed information about IP addresses including location, ISP, and network details.
 
@@ -250,7 +251,7 @@ async def get_residential_proxy_info(
             examples=["142.250.80.46"],
         ),
     ],
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> ResidentialProxyDetails:
     """Check if an IP address is associated with a residential proxy service.
 
@@ -302,7 +303,7 @@ async def get_map_url(
             examples=[["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
         ),
     ],
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> str:
     """Generate a URL to an interactive map visualization of IP addresses.
 
