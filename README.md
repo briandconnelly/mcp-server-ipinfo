@@ -1,11 +1,10 @@
 # IP Geolocation MCP Server
 
+[![PyPI](https://img.shields.io/pypi/v/mcp-server-ipinfo)](https://pypi.org/project/mcp-server-ipinfo/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
 This can be used to determine where the user is located (approximately) and what network they are used.
-
-<a href="https://glama.ai/mcp/servers/pll7u5ak1h">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/pll7u5ak1h/badge" alt="IP Geolocation Server MCP server" />
-</a>
 
 ![Example conversation using mcp-server-ipinfo](demo.png)
 
