@@ -276,6 +276,7 @@ async def get_residential_proxy_info(
     handler, _ = _get_handler_and_cache(ctx)
 
     # Validate IP
+    ip = ip.strip()
     _validate_ip(ip)
 
     await ctx.info(f"Checking residential proxy status for {ip}")

@@ -26,6 +26,8 @@ class IPInfoCache:
         """
         if ttl_seconds is None:
             ttl_seconds = int(os.environ.get("IPINFO_CACHE_TTL", "3600"))
+        if max_size < 1:
+            raise ValueError(f"max_size must be at least 1, got {max_size}")
         self._cache: dict[str, tuple[IPDetails, datetime]] = {}
         self._ttl_seconds = ttl_seconds
         self._max_size = max_size

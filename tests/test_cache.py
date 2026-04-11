@@ -36,11 +36,10 @@ class TestIPInfoCache:
         assert await cache.get("8.8.8.8") is not None
 
         # Jump past TTL
-        time_machine.travel(
+        with time_machine.travel(
             datetime(2024, 1, 1, 0, 1, 1, tzinfo=timezone.utc), tick=False
-        ).start()
-
-        assert await cache.get("8.8.8.8") is None
+        ):
+            assert await cache.get("8.8.8.8") is None
 
     async def test_ttl_from_env(self, sample_ip_details):
         """Test TTL can be configured from environment variable."""
@@ -84,12 +83,11 @@ class TestIPInfoCache:
         cache = IPInfoCache(ttl_seconds=60)
         await cache.set("8.8.8.8", sample_ip_details)
 
-        time_machine.travel(
+        with time_machine.travel(
             datetime(2024, 1, 1, 0, 1, 1, tzinfo=timezone.utc), tick=False
-        ).start()
-
-        results = await cache.get_batch(["8.8.8.8"])
-        assert len(results) == 0
+        ):
+            results = await cache.get_batch(["8.8.8.8"])
+            assert len(results) == 0
 
     @time_machine.travel("2024-01-01 00:00:00+00:00", tick=False)
     async def test_cleanup_expired(self, sample_ip_details):
@@ -98,13 +96,12 @@ class TestIPInfoCache:
         await cache.set("8.8.8.8", sample_ip_details)
         await cache.set("1.1.1.1", IPDetails(ip="1.1.1.1"))
 
-        time_machine.travel(
+        with time_machine.travel(
             datetime(2024, 1, 1, 0, 1, 1, tzinfo=timezone.utc), tick=False
-        ).start()
-
-        removed = await cache.cleanup_expired()
-        assert removed == 2
-        assert len(cache) == 0
+        ):
+            removed = await cache.cleanup_expired()
+            assert removed == 2
+            assert len(cache) == 0
 
     async def test_clear(self, cache, sample_ip_details):
         """Test clearing all entries."""
