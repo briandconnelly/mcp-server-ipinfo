@@ -1,4 +1,7 @@
-from pydantic import BaseModel, condecimal, constr
+from decimal import Decimal
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
 from pydantic.networks import HttpUrl, IPvAnyAddress
 
 
@@ -200,7 +203,7 @@ class IPDetails(BaseModel):
     - IPinfo Enterprise: Adds domains, abuse contacts, WHOIS data
     """
 
-    ip: IPvAnyAddress = None  # type: ignore
+    ip: IPvAnyAddress
     """The IP address (IPv4 or IPv6)"""
 
     hostname: str | None = None
@@ -216,7 +219,7 @@ class IPDetails(BaseModel):
     region_code: str | None = None
     """Region/state code (e.g., 'CA' for California, 'TX' for Texas)"""
 
-    country: constr(pattern=r"^[A-Z]{2}$") | None = None
+    country: Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")] | None = None
     """Two-letter ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB', 'DE')"""
 
     country_name: str | None = None
@@ -225,10 +228,10 @@ class IPDetails(BaseModel):
     loc: str | None = None
     """Geographic coordinates as 'latitude,longitude' string"""
 
-    latitude: condecimal(ge=-90, le=90) | None = None
+    latitude: Annotated[Decimal, Field(ge=-90, le=90)] | None = None
     """Latitude coordinate (-90 to 90 degrees)"""
 
-    longitude: condecimal(ge=-180, le=180) | None = None
+    longitude: Annotated[Decimal, Field(ge=-180, le=180)] | None = None
     """Longitude coordinate (-180 to 180 degrees)"""
 
     postal: str | None = None

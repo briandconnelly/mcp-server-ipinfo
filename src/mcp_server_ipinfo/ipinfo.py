@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timezone
-from ipaddress import IPv4Address, IPv6Address
 
 import httpx
 import ipinfo
@@ -8,6 +7,11 @@ import ipinfo
 from .models import IPDetails, ResidentialProxyDetails
 
 IPINFO_API_URL = "https://ipinfo.io"
+
+
+def _utc_timestamp() -> str:
+    """Return the current UTC time as an ISO 8601 string."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 async def create_async_handler(**kwargs) -> ipinfo.AsyncHandler:
@@ -45,7 +49,7 @@ async def ipinfo_lookup(handler: ipinfo.AsyncHandler, ip: str | None) -> IPDetai
         ValueError: If the provided IP address is invalid
     """
     details = await handler.getDetails(ip_address=ip)
-    return IPDetails(**details.all, ts_retrieved=str(datetime.now(timezone.utc)))
+    return IPDetails(**details.all, ts_retrieved=_utc_timestamp())
 
 
 async def ipinfo_batch_lookup(
@@ -73,7 +77,7 @@ async def ipinfo_batch_lookup(
         raise_on_fail=raise_on_fail,
     )
 
-    ts = str(datetime.now(timezone.utc))
+    ts = _utc_timestamp()
     return {
         ip: IPDetails(**details.all, ts_retrieved=ts)
         for ip, details in results.items()
@@ -101,18 +105,18 @@ async def ipinfo_resproxy_lookup(
     details = await handler.getResproxy(ip_address=ip)
     return ResidentialProxyDetails(
         **details.all,
-        ts_retrieved=str(datetime.now(timezone.utc)),
+        ts_retrieved=_utc_timestamp(),
     )
 
 
-async def ipinfo_get_map_url(ips: list[str | IPv4Address | IPv6Address]) -> str:
+async def ipinfo_get_map_url(ips: list[str]) -> str:
     """
     Get a URL to an interactive map visualization of IP addresses.
 
     The map is hosted on ipinfo.io and supports up to 500,000 IPs.
 
     Args:
-        ips: List of IP addresses to visualize on the map.
+        ips: List of IP address strings to visualize on the map.
 
     Returns:
         URL to the interactive map.
@@ -120,22 +124,19 @@ async def ipinfo_get_map_url(ips: list[str | IPv4Address | IPv6Address]) -> str:
     Raises:
         httpx.HTTPStatusError: If the API request fails.
     """
-    # Convert IP address objects to strings
-    ip_strs = []
-    for ip in ips:
-        if isinstance(ip, (IPv4Address, IPv6Address)):
-            ip_strs.append(ip.exploded)
-        else:
-            ip_strs.append(str(ip))
+    headers = {
+        "content-type": "application/json",
+        "user-agent": "mcp-server-ipinfo",
+    }
+    token = os.environ.get("IPINFO_API_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{IPINFO_API_URL}/map?cli=1",
-            json=ip_strs,
-            headers={
-                "content-type": "application/json",
-                "user-agent": "mcp-server-ipinfo",
-            },
+            json=ips,
+            headers=headers,
         )
         response.raise_for_status()
         return response.json()["reportUrl"]

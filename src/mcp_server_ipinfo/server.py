@@ -5,6 +5,7 @@ from typing import Annotated
 
 import ipinfo
 from fastmcp import Context, FastMCP
+from fastmcp.dependencies import CurrentContext
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
@@ -62,10 +63,19 @@ def _get_handler_and_cache(
     ctx: Context,
 ) -> tuple[ipinfo.AsyncHandler, IPInfoCache]:
     """Get the handler and cache from lifespan context."""
-    # In FastMCP 2.x, lifespan result is accessed via ctx.fastmcp._lifespan_result
-    # In FastMCP 3.x, this will be ctx.lifespan_context
-    lifespan_context = ctx.fastmcp._lifespan_result
+    lifespan_context = ctx.lifespan_context
     return lifespan_context["ipinfo_handler"], lifespan_context["cache"]
+
+
+_IP_CHECKS = [
+    ("is_loopback", "loopback"),
+    ("is_multicast", "multicast"),
+    ("is_link_local", "link-local"),
+    ("is_reserved", "reserved"),
+    ("is_private", "private"),
+]
+
+_NORMALIZE_SENTINELS = frozenset({"null", "", "undefined", "0.0.0.0", "::"})
 
 
 def _validate_ip(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
@@ -87,25 +97,51 @@ def _validate_ip(ip: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
         raise ToolError(f"{ip} is not a valid IP address")
 
     # Check in order of specificity - loopback and reserved are subsets of private
-    if parsed_ip.is_loopback:
-        raise ToolError(f"{ip} is a loopback IP address. Geolocation is not available.")
-    elif parsed_ip.is_multicast:
-        raise ToolError(
-            f"{ip} is a multicast IP address. Geolocation is not available."
-        )
-    elif parsed_ip.is_reserved:
-        raise ToolError(f"{ip} is a reserved IP address. Geolocation is not available.")
-    elif parsed_ip.is_private:
-        raise ToolError(f"{ip} is a private IP address. Geolocation is not available.")
+    for attr, label in _IP_CHECKS:
+        if getattr(parsed_ip, attr):
+            raise ToolError(
+                f"{ip} is a {label} IP address. Geolocation is not available."
+            )
 
     return parsed_ip
 
 
 def _normalize_ip(ip: str) -> str | None:
-    """Normalize empty/placeholder IP values to None."""
-    if ip in ("null", "", "undefined", "0.0.0.0", "::"):
+    """Normalize empty/placeholder IP values to None, stripping whitespace."""
+    ip = ip.strip()
+    if ip in _NORMALIZE_SENTINELS:
         return None
     return ip
+
+
+async def _filter_valid_ips(
+    ips: list[str], ctx: Context
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Normalize, deduplicate, validate IPs and log warnings for skipped ones.
+
+    Returns:
+        A tuple of (valid_ips, skipped) where skipped contains (ip, reason) pairs.
+    """
+    seen: set[str] = set()
+    valid: list[str] = []
+    skipped: list[tuple[str, str]] = []
+
+    for ip in ips:
+        norm = _normalize_ip(ip)
+        if norm is None or norm in seen:
+            continue
+        seen.add(norm)
+
+        try:
+            _validate_ip(norm)
+            valid.append(norm)
+        except ToolError as e:
+            skipped.append((ip, str(e)))
+
+    for ip, reason in skipped:
+        await ctx.warning(f"Skipping {ip}: {reason}")
+
+    return valid, skipped
 
 
 @mcp.tool(
@@ -122,7 +158,7 @@ async def get_ip_details(
             examples=[["8.8.8.8"], ["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
         ),
     ] = None,
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> list[IPDetails]:
     """Get detailed information about IP addresses including location, ISP, and network details.
 
@@ -157,34 +193,14 @@ async def get_ip_details(
             await ctx.error(f"Failed to look up client IP: {e}")
             raise ToolError(f"Lookup failed: {e}")
 
-    # Normalize and filter IPs
-    normalized_ips = []
-    for ip in ips:
-        norm = _normalize_ip(ip)
-        if norm is not None:
-            normalized_ips.append(norm)
+    valid_ips, skipped = await _filter_valid_ips(ips, ctx)
 
-    if not normalized_ips:
+    if not valid_ips:
         raise ToolError("No valid IP addresses provided")
 
-    # Check cache and filter valid IPs
-    cached_results = await cache.get_batch(normalized_ips)
-    ips_to_lookup = []
-    skipped = []
-
-    for ip in normalized_ips:
-        if ip in cached_results:
-            continue
-
-        try:
-            _validate_ip(ip)
-            ips_to_lookup.append(ip)
-        except ToolError as e:
-            skipped.append((ip, str(e)))
-
-    # Log skipped IPs
-    for ip, reason in skipped:
-        await ctx.warning(f"Skipping {ip}: {reason}")
+    # Check cache
+    cached_results = await cache.get_batch(valid_ips)
+    ips_to_lookup = [ip for ip in valid_ips if ip not in cached_results]
 
     if cached_results:
         await ctx.info(f"Found {len(cached_results)} IPs in cache")
@@ -198,11 +214,9 @@ async def get_ip_details(
         await ctx.info(f"Looking up {len(ips_to_lookup)} IP address(es)")
         try:
             if len(ips_to_lookup) == 1:
-                # Single IP - use regular lookup
                 result = await ipinfo_lookup(handler, ips_to_lookup[0])
                 new_results[ips_to_lookup[0]] = result
             else:
-                # Multiple IPs - use batch lookup
                 new_results = await ipinfo_batch_lookup(
                     handler, ips_to_lookup, raise_on_fail=False
                 )
@@ -211,14 +225,9 @@ async def get_ip_details(
             await ctx.error(f"IP lookup failed: {e}")
             raise ToolError(f"Lookup failed: {e}")
 
-    # Combine results
+    # Combine and return in original order
     all_results = {**cached_results, **new_results}
-
-    # Return in original order where possible
-    ordered_results = []
-    for ip in normalized_ips:
-        if ip in all_results:
-            ordered_results.append(all_results[ip])
+    ordered_results = [all_results[ip] for ip in valid_ips if ip in all_results]
 
     await ctx.info(
         f"Returning {len(ordered_results)} result(s) "
@@ -242,7 +251,7 @@ async def get_residential_proxy_info(
             examples=["142.250.80.46"],
         ),
     ],
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> ResidentialProxyDetails:
     """Check if an IP address is associated with a residential proxy service.
 
@@ -267,6 +276,7 @@ async def get_residential_proxy_info(
     handler, _ = _get_handler_and_cache(ctx)
 
     # Validate IP
+    ip = ip.strip()
     _validate_ip(ip)
 
     await ctx.info(f"Checking residential proxy status for {ip}")
@@ -294,7 +304,7 @@ async def get_map_url(
             examples=[["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
         ),
     ],
-    ctx: Context = None,
+    ctx: Context = CurrentContext(),
 ) -> str:
     """Generate a URL to an interactive map visualization of IP addresses.
 
@@ -311,24 +321,13 @@ async def get_map_url(
 
     Note: Invalid or special IPs (private, loopback, etc.) are filtered out.
     """
-    # Validate and filter IPs
-    valid_ips = []
-    skipped = []
+    MAX_MAP_IPS = 500_000
+    if len(ips) > MAX_MAP_IPS:
+        raise ToolError(
+            f"Too many IPs ({len(ips)}). Maximum is {MAX_MAP_IPS:,} for map generation."
+        )
 
-    for ip in ips:
-        norm = _normalize_ip(ip)
-        if norm is None:
-            continue
-
-        try:
-            _validate_ip(norm)
-            valid_ips.append(norm)
-        except ToolError as e:
-            skipped.append((ip, str(e)))
-
-    # Log skipped IPs
-    for ip, reason in skipped:
-        await ctx.warning(f"Skipping {ip}: {reason}")
+    valid_ips, _ = await _filter_valid_ips(ips, ctx)
 
     if not valid_ips:
         raise ToolError("No valid IP addresses to map")
