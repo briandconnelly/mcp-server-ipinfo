@@ -8,15 +8,10 @@ from fastmcp.exceptions import ToolError
 from mcp_server_ipinfo.server import (
     _normalize_ip,
     _validate_ip,
-    get_ip_details as get_ip_details_tool,
-    get_map_url as get_map_url_tool,
-    get_residential_proxy_info as get_residential_proxy_info_tool,
+    get_ip_details,
+    get_map_url,
+    get_residential_proxy_info,
 )
-
-# Access underlying functions from FunctionTool wrappers
-get_ip_details = get_ip_details_tool.fn
-get_map_url = get_map_url_tool.fn
-get_residential_proxy_info = get_residential_proxy_info_tool.fn
 
 
 class TestValidateIP:

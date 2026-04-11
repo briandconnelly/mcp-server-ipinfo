@@ -62,9 +62,7 @@ def _get_handler_and_cache(
     ctx: Context,
 ) -> tuple[ipinfo.AsyncHandler, IPInfoCache]:
     """Get the handler and cache from lifespan context."""
-    # In FastMCP 2.x, lifespan result is accessed via ctx.fastmcp._lifespan_result
-    # In FastMCP 3.x, this will be ctx.lifespan_context
-    lifespan_context = ctx.fastmcp._lifespan_result
+    lifespan_context = ctx.lifespan_context
     return lifespan_context["ipinfo_handler"], lifespan_context["cache"]
 
 
