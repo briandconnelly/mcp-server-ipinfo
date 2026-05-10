@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MapResult` and `SkippedIP` Pydantic models for the structured map response
 - httpx exception classification: `httpx.TimeoutException` → `timeout` envelope code, `httpx.HTTPStatusError` → status-aware codes (`auth_invalid` for 401, `auth_insufficient_scope` for 403, `quota_exceeded` for 429, `api_error` for other 4xx/5xx)
 - Explicit timeouts on the map path: `httpx.AsyncClient(timeout=30s)` at the HTTP layer plus FastMCP's `@mcp.tool(timeout=60s)` as framework-level defense-in-depth so a hung upstream cannot block the tool indefinitely
+- `ResidentialProxyDetails.is_residential_proxy`: a Pydantic `@computed_field` that returns `True` iff `service is not None`; serialized to JSON output so agents can branch on a stable boolean instead of inspecting all-None fields
+- `IPINFO_CACHE_SIZE` environment variable for tuning the in-memory cache's max-entry count (default `4096`); previously only `IPINFO_CACHE_TTL` was wired
+- Expanded server `instructions` with a "what this server does NOT do" section (no DNS/CIDR/historical/malice scoring; private IPs filtered at boundary), per-plan-tier capability list, cache TTL/size + `ts_retrieved` semantics, and a stdio-transport caveat for `ipinfo_lookup_my_ip`
+
+### Fixed
+- `ipinfo_generate_map_url` now reads the IPInfo token from the handler captured at startup (`handler.access_token`) instead of re-reading `IPINFO_API_TOKEN` on every call; a runtime env mutation can no longer cause the lookup and map paths to disagree on which token is in use
+- `_filter_valid_ips` now records empty/placeholder values (`""`, `"null"`, `"undefined"`, `"0.0.0.0"`, `"::"`) and duplicates as explicit `SkippedIP` entries with readable reasons, so `MapResult.mapped_ip_count + skipped_count` matches the input length
+- Per-IP `ctx.warning()` emissions during input filtering are capped at 100 with an aggregated summary line after the cap; a 500K batch with all entries filtered no longer floods logs or risks tripping the 60s tool-level timeout
 
 ## [0.4.0] - 2026-04-11
 

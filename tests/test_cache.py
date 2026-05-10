@@ -47,6 +47,12 @@ class TestIPInfoCache:
             cache = IPInfoCache()
             assert cache.ttl_seconds == 7200
 
+    async def test_max_size_from_env(self):
+        """max_size honors IPINFO_CACHE_SIZE env var when not given explicitly."""
+        with patch.dict("os.environ", {"IPINFO_CACHE_SIZE": "256"}):
+            cache = IPInfoCache()
+            assert cache._max_size == 256
+
     async def test_set_batch(self, cache, sample_ip_details):
         """Test setting multiple entries at once."""
         details1 = sample_ip_details

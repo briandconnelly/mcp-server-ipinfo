@@ -47,33 +47,67 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[dict]:
 mcp = FastMCP(
     name="IP Address Geolocation and Internet Service Provider Lookup",
     instructions="""
-    This MCP server provides tools to look up IP address information using the IPInfo API.
-    For a given IPv4 or IPv6 address, it provides information about the geographic location
-    of that device, the internet service provider, and additional information about the connection.
+    This MCP server looks up information about IPv4 and IPv6 addresses via the
+    IPInfo API: geographic location (country, region, city, coordinates), the
+    owning organization / ISP, and (on paid plans) ASN, privacy/VPN/Tor/proxy
+    detection, mobile carrier, company, abuse contacts, and hosted domains.
 
-    Available tools (current, ipinfo_-prefixed):
-    - ipinfo_lookup_my_ip: Look up details for the calling client's own IP address
-    - ipinfo_lookup_ips: Look up details for one or more specific IPs (supports detail="summary" for batch token savings)
-    - ipinfo_check_residential_proxy: Check if an IP belongs to a residential proxy network
-    - ipinfo_generate_map_url: Generate an interactive map URL for a set of IP locations (returns a structured MapResult)
+    Tools (current, ipinfo_-prefixed):
+    - ipinfo_lookup_my_ip: Geolocate the calling client's own IP (no arguments).
+    - ipinfo_lookup_ips: Geolocate one or more specific IPs. Supports
+      detail="summary" to null heavy nested blocks for batch token savings.
+    - ipinfo_check_residential_proxy: Check whether an IP is a known residential
+      proxy exit (Enterprise add-on; tagged "enterprise").
+    - ipinfo_generate_map_url: Build an interactive ipinfo.io map URL for a set
+      of IPs. Returns a structured MapResult.
 
-    Deprecated aliases (will be removed in 0.6.0): get_ip_details, get_residential_proxy_info, get_map_url.
+    Deprecated aliases (forwarding wrappers, removed in 0.6.0): get_ip_details,
+    get_residential_proxy_info, get_map_url.
 
-    The IPInfo API is free to use with rate limits. Paid plans provide more information.
-    Set the IPINFO_API_TOKEN environment variable with a valid API key for premium features.
+    What this server does NOT do:
+    - Resolve hostnames or domains to IPs (use DNS tooling).
+    - Look up IP ranges, CIDR blocks, or BGP routes.
+    - Provide historical or time-series IP data — every result is the current
+      snapshot from IPInfo.
+    - Geolocate private, loopback, link-local, multicast, or other reserved
+      addresses; these are filtered at the boundary with `special_ip_unsupported`.
+    - Geolocate the actual user behind a VPN, proxy, Tor relay, or cloud host;
+      results reflect the exit point's location, not the originating user's.
+    - Score, classify, or otherwise attribute IPs as "malicious"; only the raw
+      privacy/proxy signals are returned.
 
-    The accuracy of IP geolocation can vary. Generally, the country is accurate, but the
-    city and region may not be. If a user is using a VPN, Proxy, Tor, or hosting provider,
-    the location returned will be the location of that service's exit point.
+    Plan tiers (set IPINFO_API_TOKEN to enable):
+    - No token (free Lite): country, country_code, continent, ASN basics.
+    - Core: full geolocation, ASN details, privacy/VPN/proxy/Tor/hosting flags.
+    - Plus: adds carrier and company data.
+    - Enterprise: adds domains and abuse contacts; the residential-proxy add-on
+      is what powers ipinfo_check_residential_proxy.
 
-    An IPv4 address consists of four decimal numbers separated by dots (.).
-    An IPv6 address consists of eight groups of four hexadecimal numbers separated by colons (:).
+    Caching:
+    - IP lookup results are cached in-memory for IPINFO_CACHE_TTL seconds
+      (default 3600, i.e. one hour). Up to IPINFO_CACHE_SIZE entries (default
+      4096) are retained; the oldest are evicted.
+    - Cached records keep their original `ts_retrieved` timestamp; that field
+      reflects when the lookup was first performed, not when the cached value
+      was returned. Compare against the current time to gauge freshness.
 
+    Transport notes:
+    - Stdio is the default transport; ipinfo_lookup_my_ip resolves to the IP
+      that ipinfo.io sees from this MCP server's outbound connection (typically
+      the host's egress IP), not the end user's IP. Use ipinfo_lookup_ips when
+      the caller already has the target IP.
+
+    Errors:
     All tool errors carry a JSON-encoded ToolErrorEnvelope in the error message
     with a stable `code` (one of: auth_invalid, auth_insufficient_scope,
     quota_exceeded, timeout, api_error, invalid_ip_address, special_ip_unsupported,
     no_valid_ips, too_many_ips, unknown_error), a `temporary` flag, an optional
     `retry_after_ms`, and a `repair` hint. Parse the error string as JSON to branch.
+
+    Address formats:
+    IPv4 = four decimal octets separated by dots (e.g., 8.8.8.8).
+    IPv6 = eight groups of four hexadecimal digits separated by colons
+    (e.g., 2001:4860:4860::8888).
     """,
     lifespan=app_lifespan,
 )
@@ -722,8 +756,12 @@ async def ipinfo_generate_map_url(
 
     await ctx.info(f"Generating map for {len(valid_ips)} IP address(es)")
 
+    # Pull the token from the handler (captured at startup) instead of
+    # re-reading the environment, so a runtime IPINFO_API_TOKEN mutation
+    # cannot produce divergent behavior between the lookup and map paths.
+    handler, _ = _get_handler_and_cache(ctx)
     try:
-        url = await ipinfo_get_map_url(valid_ips)
+        url = await ipinfo_get_map_url(valid_ips, token=handler.access_token)
         await ctx.info("Map URL generated successfully")
     except Exception as e:
         await ctx.error(f"Map generation failed: {e}")

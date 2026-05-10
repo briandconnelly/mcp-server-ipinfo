@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, computed_field
 from pydantic.networks import HttpUrl, IPvAnyAddress
 
 
@@ -237,7 +237,20 @@ class ResidentialProxyDetails(BaseModel):
     """Name of the residential proxy service (e.g., 'Luminati', 'Oxylabs')"""
 
     ts_retrieved: str | None = None
-    """Timestamp when this information was retrieved (UTC ISO format)"""
+    """UTC ISO timestamp of when this residential-proxy lookup was performed."""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_residential_proxy(self) -> bool:
+        """Whether the IP is a known residential-proxy exit node.
+
+        Derived from ``service``: the IPInfo residential-proxy add-on returns
+        a non-null ``service`` only for IPs it has classified as proxies, so
+        ``service is not None`` is the canonical "yes/no" signal. Surfaces in
+        JSON output so agents can branch on a stable boolean instead of
+        inspecting all-None fields.
+        """
+        return self.service is not None
 
 
 class IPDetails(BaseModel):
@@ -319,7 +332,14 @@ class IPDetails(BaseModel):
     """Whether this IP uses anycast routing"""
 
     bogon: bool | None = None
-    """Whether this is a bogon (unallocated/reserved) IP address"""
+    """Whether this is a bogon (unallocated/reserved) IP address.
+
+    In practice this server filters bogon-like inputs (private, loopback,
+    multicast, link-local, reserved) at the boundary with a structured
+    ``special_ip_unsupported`` error before any IPInfo call, so this field is
+    typically ``None`` here. It is retained on the model so any future
+    relaxation of the boundary check (or a Lite-tier response that surfaces
+    a bogon flag for an apparently-public IP) is round-trippable."""
 
     # Extended fields (higher tiers)
     carrier: CarrierDetails | None = None
@@ -336,7 +356,12 @@ class IPDetails(BaseModel):
 
     # Metadata
     ts_retrieved: str | None = None
-    """Timestamp when this lookup was performed (UTC ISO format)"""
+    """UTC ISO timestamp of the original IPInfo lookup.
+
+    For cached results, this preserves the original lookup time (not the time
+    the cached value was returned). Compare against the current time to gauge
+    freshness; the cache TTL is configurable via ``IPINFO_CACHE_TTL`` (default
+    3600 seconds)."""
 
 
 class SkippedIP(BaseModel):
