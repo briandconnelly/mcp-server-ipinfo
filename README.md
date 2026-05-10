@@ -33,7 +33,7 @@ To run the latest from `main`:
 ## Tools
 
 - **`ipinfo_lookup_my_ip()`** — Geolocate the calling client's own IP. Takes no arguments. On stdio transports the result reflects this server's outbound IP, not the end user's.
-- **`ipinfo_lookup_ips(ips, detail="full")`** — Geolocate one or more specified IPs. `detail="summary"` strips heavy nested blocks (continent, flags, currency, abuse, domains) for batch token savings while preserving shape parity. Capped at 500,000 IPs per call. Invalid or special-use addresses (private, loopback, etc.) are filtered with structured per-IP reasons.
+- **`ipinfo_lookup_ips(ips, detail="full")`** — Geolocate one or more specified IPs. `detail="summary"` strips heavy nested blocks (continent, flags, currency, abuse, domains) for batch token savings while preserving shape parity. Capped at 500,000 IPs per call. Invalid or special-use addresses (private, loopback, etc.) are filtered with `ctx.warning()` and excluded from the result list — match returned `IPDetails.ip` values back to your input to detect what was dropped.
 - **`ipinfo_check_residential_proxy(ip)`** — Check whether an IP is a known residential-proxy exit node. Tagged `enterprise` — requires the IPInfo residential-proxy add-on.
 - **`ipinfo_generate_map_url(ips)`** — Build an interactive ipinfo.io map for a set of IPs. Returns a `MapResult` with the URL, the count that made the map, the IPs filtered out (with reasons, capped at 100), and a `truncated` flag.
 
@@ -44,7 +44,8 @@ To run the latest from `main`:
 | Free Lite (no token) | country, country_code, continent, ASN basics |
 | Core | full geolocation, ASN details, privacy/VPN/proxy/Tor/hosting flags |
 | Plus | adds carrier and company data |
-| Enterprise | adds domains, abuse contacts, residential-proxy add-on |
+| Enterprise | adds domains and abuse contacts |
+| Residential-proxy add-on | enables `ipinfo_check_residential_proxy`. Sold separately on top of Enterprise; not included by default. |
 
 ### Errors
 

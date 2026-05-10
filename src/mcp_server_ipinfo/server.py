@@ -73,7 +73,9 @@ mcp = FastMCP(
     - no token: country, country_code, continent, ASN basics
     - Core: + full geolocation, ASN details, privacy/VPN/proxy/Tor/hosting flags
     - Plus: + carrier, company
-    - Enterprise: + domains, abuse, residential-proxy add-on
+    - Enterprise: + domains, abuse contacts
+    - Residential-proxy add-on (sold separately, on top of Enterprise; not
+      included by default): enables ipinfo_check_residential_proxy.
 
     Cache (lookup tools only — not residential-proxy or map): in-memory,
     IPINFO_CACHE_TTL seconds (default 3600), max IPINFO_CACHE_SIZE entries
