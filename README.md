@@ -6,8 +6,6 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the [ipinfo.io](https://ipinfo.io) API to AI agents. Geolocate IPv4 and IPv6 addresses, identify ISPs and ASNs, detect VPN/proxy/Tor exit nodes, and generate interactive maps for sets of IPs.
 
-![Example conversation using mcp-server-ipinfo](demo.png)
-
 
 ## Installation
 
