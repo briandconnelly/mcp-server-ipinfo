@@ -12,9 +12,7 @@ class IPInfoCache:
     An async-safe cache for IPInfo API responses with TTL expiration.
     """
 
-    def __init__(
-        self, ttl_seconds: int | None = None, max_size: int = DEFAULT_MAX_SIZE
-    ):
+    def __init__(self, ttl_seconds: int | None = None, max_size: int | None = None):
         """
         Initialize the cache.
 
@@ -22,10 +20,13 @@ class IPInfoCache:
             ttl_seconds: Time-to-live for cache entries in seconds.
                         Defaults to IPINFO_CACHE_TTL env var or 3600 (1 hour).
             max_size: Maximum number of entries. Oldest entries are evicted
-                     when this limit is exceeded.
+                     when this limit is exceeded. Defaults to IPINFO_CACHE_SIZE
+                     env var or 4096.
         """
         if ttl_seconds is None:
             ttl_seconds = int(os.environ.get("IPINFO_CACHE_TTL", "3600"))
+        if max_size is None:
+            max_size = int(os.environ.get("IPINFO_CACHE_SIZE", str(DEFAULT_MAX_SIZE)))
         if max_size < 1:
             raise ValueError(f"max_size must be at least 1, got {max_size}")
         self._cache: dict[str, tuple[IPDetails, datetime]] = {}

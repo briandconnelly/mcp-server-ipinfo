@@ -150,7 +150,10 @@ DEFAULT_MAP_TIMEOUT_SECONDS = 30.0
 
 
 async def ipinfo_get_map_url(
-    ips: list[str], timeout: float = DEFAULT_MAP_TIMEOUT_SECONDS
+    ips: list[str],
+    *,
+    token: str | None = None,
+    timeout: float = DEFAULT_MAP_TIMEOUT_SECONDS,
 ) -> str:
     """
     Get a URL to an interactive map visualization of IP addresses.
@@ -159,8 +162,13 @@ async def ipinfo_get_map_url(
 
     Args:
         ips: List of IP address strings to visualize on the map.
+        token: IPInfo API token to authorize the request. Pass the value once
+            from the calling layer (typically ``handler.access_token`` set at
+            startup) so the environment is not re-read on every call.
+            ``None`` sends no Authorization header (free-tier behavior).
+            Keyword-only.
         timeout: Request timeout in seconds. Bounds the HTTP call so a hung
-            upstream cannot block the tool indefinitely.
+            upstream cannot block the tool indefinitely. Keyword-only.
 
     Returns:
         URL to the interactive map.
@@ -173,7 +181,6 @@ async def ipinfo_get_map_url(
         "content-type": "application/json",
         "user-agent": "mcp-server-ipinfo",
     }
-    token = os.environ.get("IPINFO_API_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
