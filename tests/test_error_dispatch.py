@@ -61,14 +61,40 @@ class TestValidationErrorCodes:
         assert env["field"] == "ips"
 
     async def test_too_many_ips_code(self, mock_context_with_state):
-        # Exceed the 500K cap to trigger the size guard.
-        ips = [f"1.1.1.{i % 256}" for i in range(500_001)]
+        # Exceed the 500K cap to trigger the size guard. The cap check fires
+        # before any per-IP work, so a repeated single-value list exercises
+        # the same branch with O(1) memory per element instead of O(N).
+        ips = ["1.1.1.1"] * 500_001
         with pytest.raises(ToolError) as excinfo:
             await get_map_url(ips=ips, ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "too_many_ips"
         assert env["temporary"] is False
         assert env["field"] == "ips"
+
+    async def test_lookup_ips_defense_in_depth_cap(self, mock_context_with_state):
+        """ipinfo_lookup_ips also rejects oversized input at the runtime layer.
+
+        Schema enforces the cap at the FastMCP boundary, but direct Python
+        invocation skips that path; the inner _do_batch_lookup guard catches it.
+        """
+        from mcp_server_ipinfo.server import ipinfo_lookup_ips
+
+        ips = ["1.1.1.1"] * 500_001
+        with pytest.raises(ToolError) as excinfo:
+            await ipinfo_lookup_ips(ips=ips, ctx=mock_context_with_state)
+        env = parse_envelope(excinfo)
+        assert env["code"] == "too_many_ips"
+
+    async def test_deprecated_get_ip_details_inherits_cap(
+        self, mock_context_with_state
+    ):
+        """The deprecated alias forwards to _do_batch_lookup so it inherits the cap."""
+        ips = ["1.1.1.1"] * 500_001
+        with pytest.raises(ToolError) as excinfo:
+            await get_ip_details(ips=ips, ctx=mock_context_with_state)
+        env = parse_envelope(excinfo)
+        assert env["code"] == "too_many_ips"
 
 
 class TestUpstreamErrorCodes:

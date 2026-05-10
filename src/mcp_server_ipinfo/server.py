@@ -62,10 +62,10 @@ mcp = FastMCP(
     An IPv6 address consists of eight groups of four hexadecimal numbers separated by colons (:).
 
     All tool errors carry a JSON-encoded ToolErrorEnvelope in the error message
-    with a stable `code` (e.g., auth_invalid, auth_insufficient_scope,
+    with a stable `code` (one of: auth_invalid, auth_insufficient_scope,
     quota_exceeded, timeout, api_error, invalid_ip_address, special_ip_unsupported,
-    no_valid_ips, too_many_ips), a `temporary` flag, an optional `retry_after_ms`,
-    and a `repair` hint. Parse the error string as JSON to branch.
+    no_valid_ips, too_many_ips, unknown_error), a `temporary` flag, an optional
+    `retry_after_ms`, and a `repair` hint. Parse the error string as JSON to branch.
     """,
     lifespan=app_lifespan,
 )
@@ -203,12 +203,17 @@ def _envelope_from_upstream(
             None,
             {"hint": "Retry; transient network or upstream slowness."},
         )
+    # Catch-all: surface the exception class name as a structured field so
+    # agents can branch on type without parsing the message. The raw
+    # `str(exc)` is included to preserve diagnostic context (we run with
+    # mask_error_details=False); upstream library messages should not embed
+    # secrets, but callers wanting redaction can flip mask_error_details.
     return (
         "unknown_error",
-        f"Unexpected error: {exc}",
+        f"Unexpected {type(exc).__name__}: {exc}",
         True,
         None,
-        None,
+        {"exception_type": type(exc).__name__},
     )
 
 
@@ -342,6 +347,23 @@ async def _do_batch_lookup(
 
     Shared between ipinfo_lookup_ips and the deprecated get_ip_details alias.
     """
+    # Defense-in-depth: schema enforces the cap, but direct Python invocation
+    # (or any caller bypassing FastMCP validation) can still pass an arbitrary
+    # list. Reject early before any per-IP work.
+    if len(ips) > MAX_LOOKUP_IPS:
+        _raise_envelope(
+            "too_many_ips",
+            f"Too many IPs ({len(ips)}). Maximum is {MAX_LOOKUP_IPS:,} per lookup.",
+            temporary=False,
+            field="ips",
+            value=len(ips),
+            repair={
+                "limit": MAX_LOOKUP_IPS,
+                "received": len(ips),
+                "hint": f"Reduce ips to <= {MAX_LOOKUP_IPS} entries.",
+            },
+        )
+
     valid_ips, skipped = await _filter_valid_ips(ips, ctx)
 
     if not valid_ips:

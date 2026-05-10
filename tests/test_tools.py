@@ -336,7 +336,11 @@ class TestGetMapUrl:
     # API-error → structured envelope coverage lives in test_error_dispatch.py.
 
     async def test_too_many_ips_error(self, mock_context_with_state):
-        """Test error when too many IPs are provided."""
-        ips = [f"1.1.1.{i % 256}" for i in range(500_001)]
+        """Test error when too many IPs are provided.
+
+        The cap check fires before any per-IP work, so a repeated single-value
+        list keeps the test cheap.
+        """
+        ips = ["1.1.1.1"] * 500_001
         with pytest.raises(ToolError, match="Too many IPs"):
             await get_map_url(ips=ips, ctx=mock_context_with_state)
