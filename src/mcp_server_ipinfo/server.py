@@ -118,6 +118,11 @@ MAX_LOOKUP_IPS = 500_000
 # entries filtered cannot inflate the response. truncated=True signals overflow.
 MAX_SKIPPED_IPS_REPORTED = 100
 
+# Cap on per-IP ``ctx.warning`` emissions during input filtering so a 500K
+# batch with many filtered entries cannot drown the log stream (and trip the
+# tool-level timeout). After the cap, a single aggregated summary is logged.
+MAX_SKIP_WARNINGS = 100
+
 # Framework-level guard on the map tool. Bounds end-to-end execution time
 # even if the underlying httpx client misbehaves; httpx itself enforces a
 # tighter per-request timeout (DEFAULT_MAP_TIMEOUT_SECONDS).
@@ -359,7 +364,12 @@ async def _filter_valid_ips(
     """Normalize, deduplicate, validate IPs and log warnings for skipped ones.
 
     Returns:
-        A tuple of (valid_ips, skipped) where skipped contains (ip, reason) pairs.
+        A tuple of (valid_ips, skipped) where skipped contains (ip, reason)
+        pairs. Empty/placeholder values and duplicates are recorded in
+        ``skipped`` with explicit reasons so ``mapped + skipped`` accounts for
+        every input. Per-IP ``ctx.warning`` emissions are capped at
+        ``MAX_SKIP_WARNINGS`` (with an aggregated summary after the cap) so a
+        500K batch cannot flood the log stream.
     """
     seen: set[str] = set()
     valid: list[str] = []
@@ -367,7 +377,11 @@ async def _filter_valid_ips(
 
     for ip in ips:
         norm = _normalize_ip(ip)
-        if norm is None or norm in seen:
+        if norm is None:
+            skipped.append((ip, "empty or placeholder value (treated as not an IP)"))
+            continue
+        if norm in seen:
+            skipped.append((ip, "duplicate of a previously submitted IP"))
             continue
         seen.add(norm)
 
@@ -377,8 +391,14 @@ async def _filter_valid_ips(
         except ToolError as e:
             skipped.append((ip, _envelope_message(e)))
 
-    for ip, reason in skipped:
+    for ip, reason in skipped[:MAX_SKIP_WARNINGS]:
         await ctx.warning(f"Skipping {ip}: {reason}")
+    if len(skipped) > MAX_SKIP_WARNINGS:
+        await ctx.warning(
+            f"Skipped {len(skipped)} IPs total; per-IP details logged for the first "
+            f"{MAX_SKIP_WARNINGS}. The structured response carries up to "
+            f"{MAX_SKIPPED_IPS_REPORTED} skipped entries with reasons."
+        )
 
     return valid, skipped
 

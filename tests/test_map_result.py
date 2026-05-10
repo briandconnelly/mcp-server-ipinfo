@@ -109,6 +109,76 @@ class TestIpinfoGenerateMapUrlReturnsStructured:
             assert "private" in entry.reason.lower()
         assert result.truncated is False
 
+    async def test_sentinels_recorded_as_skipped(
+        self, mock_context_with_state, mock_httpx_response
+    ):
+        """Empty/placeholder inputs ("", "null", "0.0.0.0") show up in skipped_count.
+
+        Regression for accounting: mapped_ip_count + skipped_count must equal
+        the input length so agents can audit what happened to every IP they sent.
+        """
+        from mcp_server_ipinfo.server import ipinfo_generate_map_url
+
+        ips = ["8.8.8.8", "", "null", "undefined", "0.0.0.0", "1.1.1.1"]
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_httpx_response
+            )
+            result = await ipinfo_generate_map_url(ips=ips, ctx=mock_context_with_state)
+
+        assert result.mapped_ip_count == 2
+        assert result.skipped_count == 4
+        assert result.mapped_ip_count + result.skipped_count == len(ips)
+        # Each sentinel surfaces with a readable reason.
+        sentinel_reasons = {entry.ip: entry.reason for entry in result.skipped_ips}
+        for sentinel in ("", "null", "undefined", "0.0.0.0"):
+            assert sentinel in sentinel_reasons
+            assert "placeholder" in sentinel_reasons[sentinel]
+
+    async def test_duplicates_recorded_as_skipped(
+        self, mock_context_with_state, mock_httpx_response
+    ):
+        """Duplicate inputs are counted in skipped, not silently dropped."""
+        from mcp_server_ipinfo.server import ipinfo_generate_map_url
+
+        ips = ["8.8.8.8", "8.8.8.8", "1.1.1.1", "8.8.8.8"]
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_httpx_response
+            )
+            result = await ipinfo_generate_map_url(ips=ips, ctx=mock_context_with_state)
+
+        assert result.mapped_ip_count == 2
+        assert result.skipped_count == 2
+        for entry in result.skipped_ips:
+            assert entry.ip == "8.8.8.8"
+            assert "duplicate" in entry.reason.lower()
+
+    async def test_warning_emissions_capped(
+        self, mock_context_with_state, mock_httpx_response
+    ):
+        """Per-IP ctx.warning() emissions stop at MAX_SKIP_WARNINGS + 1 (summary)."""
+        from mcp_server_ipinfo.server import (
+            MAX_SKIP_WARNINGS,
+            ipinfo_generate_map_url,
+        )
+
+        # 200 private IPs (all skipped) + 1 public so the call doesn't error out.
+        ips = [f"10.0.{i // 256}.{i % 256}" for i in range(200)] + ["8.8.8.8"]
+        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_httpx_response
+            )
+            await ipinfo_generate_map_url(ips=ips, ctx=mock_context_with_state)
+
+        # MAX_SKIP_WARNINGS per-IP warnings + one aggregated summary warning.
+        warning_count = mock_context_with_state.warning.call_count
+        assert warning_count == MAX_SKIP_WARNINGS + 1
+        # The last call is the aggregated summary.
+        summary = mock_context_with_state.warning.call_args.args[0]
+        assert "200" in summary  # total skipped
+        assert str(MAX_SKIP_WARNINGS) in summary
+
     async def test_skipped_list_caps_at_100(
         self, mock_context_with_state, mock_httpx_response
     ):
