@@ -237,7 +237,11 @@ class ResidentialProxyDetails(BaseModel):
     """Name of the residential proxy service (e.g., 'Luminati', 'Oxylabs')"""
 
     ts_retrieved: str | None = None
-    """UTC ISO timestamp of when this residential-proxy lookup was performed."""
+    """UTC ISO timestamp of when this residential-proxy lookup was performed.
+
+    Residential-proxy lookups are not cached, so this always reflects the
+    current call (unlike ``IPDetails.ts_retrieved``, which preserves the
+    original lookup time across cache hits)."""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -258,10 +262,11 @@ class IPDetails(BaseModel):
     Comprehensive IP address information including geolocation, network, and metadata.
 
     Fields available depend on your IPinfo plan:
-    - IPinfo Lite (free): country, country_code, continent, asn basics
-    - IPinfo Core: Full geolocation, ASN details, privacy detection
-    - IPinfo Plus: Adds carrier info, accuracy radius, company data
-    - IPinfo Enterprise: Adds domains, abuse contacts, WHOIS data
+    - IPinfo Lite (free): country, country_code, continent, ASN basics
+    - IPinfo Core: full geolocation, ASN details, privacy/VPN/proxy/Tor flags
+    - IPinfo Plus: adds carrier and company data
+    - IPinfo Enterprise: adds domains and abuse contacts; the residential-proxy
+      add-on (separate purchase) powers ipinfo_check_residential_proxy
     """
 
     ip: IPvAnyAddress
