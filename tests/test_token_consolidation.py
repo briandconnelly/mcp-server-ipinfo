@@ -89,6 +89,19 @@ class TestIpinfoGetMapUrlAcceptsToken:
         sent_headers = mock_post.call_args.kwargs["headers"]
         assert sent_headers["Authorization"] == "Bearer explicit-arg-token"
 
+    async def test_token_and_timeout_are_keyword_only(self):
+        """Both `token` and `timeout` are keyword-only.
+
+        Making them keyword-only prevents silent breakage for any caller that
+        passed `timeout` positionally before `token` was introduced (e.g.
+        `ipinfo_get_map_url(ips, 10)` would otherwise route the integer into
+        `token`).
+        """
+        from mcp_server_ipinfo.ipinfo import ipinfo_get_map_url
+
+        with pytest.raises(TypeError, match="positional"):
+            await ipinfo_get_map_url(["8.8.8.8"], "stray-positional-token")  # type: ignore[misc]
+
     async def test_no_token_means_no_authorization_header(self, monkeypatch):
         from mcp_server_ipinfo.ipinfo import ipinfo_get_map_url
 
