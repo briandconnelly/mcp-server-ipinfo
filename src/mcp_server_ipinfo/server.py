@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal, NoReturn
 
+import httpx
 import ipinfo
 from fastmcp import Context, FastMCP
 from fastmcp.dependencies import CurrentContext
@@ -20,7 +21,14 @@ from .ipinfo import (
     ipinfo_lookup,
     ipinfo_resproxy_lookup,
 )
-from .models import IPDetails, ResidentialProxyDetails, ToolErrorCode, ToolErrorEnvelope
+from .models import (
+    IPDetails,
+    MapResult,
+    ResidentialProxyDetails,
+    SkippedIP,
+    ToolErrorCode,
+    ToolErrorEnvelope,
+)
 
 
 @asynccontextmanager
@@ -47,7 +55,7 @@ mcp = FastMCP(
     - ipinfo_lookup_my_ip: Look up details for the calling client's own IP address
     - ipinfo_lookup_ips: Look up details for one or more specific IPs (supports detail="summary" for batch token savings)
     - ipinfo_check_residential_proxy: Check if an IP belongs to a residential proxy network
-    - ipinfo_generate_map_url: Generate an interactive map URL for a set of IP locations
+    - ipinfo_generate_map_url: Generate an interactive map URL for a set of IP locations (returns a structured MapResult)
 
     Deprecated aliases (will be removed in 0.6.0): get_ip_details, get_residential_proxy_info, get_map_url.
 
@@ -106,6 +114,20 @@ DetailLevel = Literal["summary", "full"]
 
 MAX_LOOKUP_IPS = 500_000
 
+# Cap on the size of MapResult.skipped_ips so a 500K-IP submission with all
+# entries filtered cannot inflate the response. truncated=True signals overflow.
+MAX_SKIPPED_IPS_REPORTED = 100
+
+# Cap on per-IP ``ctx.warning`` emissions during input filtering so a 500K
+# batch with many filtered entries cannot drown the log stream (and trip the
+# tool-level timeout). After the cap, a single aggregated summary is logged.
+MAX_SKIP_WARNINGS = 100
+
+# Framework-level guard on the map tool. Bounds end-to-end execution time
+# even if the underlying httpx client misbehaves; httpx itself enforces a
+# tighter per-request timeout (DEFAULT_MAP_TIMEOUT_SECONDS).
+MAP_TOOL_TIMEOUT_SECONDS = 60.0
+
 
 def _raise_envelope(
     code: ToolErrorCode,
@@ -140,8 +162,9 @@ def _envelope_from_upstream(
     """Classify an upstream exception into the structured-error fields.
 
     Returns ``(code, message, temporary, retry_after_ms, repair)``. The mapping
-    distinguishes auth failures from quota and timeout failures so agents can
-    take different repair paths.
+    covers both the ``ipinfo`` SDK exceptions (used by the lookup tools) and
+    raw ``httpx`` exceptions (used by the map tool which calls the IPInfo map
+    endpoint directly).
     """
     if isinstance(exc, APIError):
         if exc.error_code == 401:
@@ -202,6 +225,59 @@ def _envelope_from_upstream(
             True,
             None,
             {"hint": "Retry; transient network or upstream slowness."},
+        )
+    # The map tool talks to ipinfo.io via httpx directly, so its failures
+    # surface as httpx exceptions rather than ipinfo SDK exceptions.
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            "timeout",
+            "Map request timed out before the upstream responded.",
+            True,
+            None,
+            {"hint": "Retry; transient network or upstream slowness."},
+        )
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 401:
+            return (
+                "auth_invalid",
+                "IPInfo rejected the provided API token.",
+                False,
+                None,
+                {"hint": "Set IPINFO_API_TOKEN to a valid IPInfo API token."},
+            )
+        if status == 403:
+            return (
+                "auth_insufficient_scope",
+                "IPInfo plan does not grant access to the map endpoint.",
+                False,
+                None,
+                {"hint": "Upgrade your IPInfo plan."},
+            )
+        if status == 429:
+            return (
+                "quota_exceeded",
+                "IPInfo rate limit exceeded.",
+                True,
+                None,
+                {"hint": "Wait for the rate-limit window to reset."},
+            )
+        if 500 <= status < 600:
+            return (
+                "api_error",
+                f"IPInfo returned HTTP {status}.",
+                True,
+                None,
+                {
+                    "hint": "Retry after a short delay; the upstream service is degraded."
+                },
+            )
+        return (
+            "api_error",
+            f"IPInfo returned HTTP {status}.",
+            False,
+            None,
+            None,
         )
     # Catch-all: surface the exception class name as a structured field so
     # agents can branch on type without parsing the message. The raw
@@ -288,7 +364,12 @@ async def _filter_valid_ips(
     """Normalize, deduplicate, validate IPs and log warnings for skipped ones.
 
     Returns:
-        A tuple of (valid_ips, skipped) where skipped contains (ip, reason) pairs.
+        A tuple of (valid_ips, skipped) where skipped contains (ip, reason)
+        pairs. Empty/placeholder values and duplicates are recorded in
+        ``skipped`` with explicit reasons so ``mapped + skipped`` accounts for
+        every input. Per-IP ``ctx.warning`` emissions are capped at
+        ``MAX_SKIP_WARNINGS`` (with an aggregated summary after the cap) so a
+        500K batch cannot flood the log stream.
     """
     seen: set[str] = set()
     valid: list[str] = []
@@ -296,7 +377,11 @@ async def _filter_valid_ips(
 
     for ip in ips:
         norm = _normalize_ip(ip)
-        if norm is None or norm in seen:
+        if norm is None:
+            skipped.append((ip, "empty or placeholder value (treated as not an IP)"))
+            continue
+        if norm in seen:
+            skipped.append((ip, "duplicate of a previously submitted IP"))
             continue
         seen.add(norm)
 
@@ -306,8 +391,14 @@ async def _filter_valid_ips(
         except ToolError as e:
             skipped.append((ip, _envelope_message(e)))
 
-    for ip, reason in skipped:
+    for ip, reason in skipped[:MAX_SKIP_WARNINGS]:
         await ctx.warning(f"Skipping {ip}: {reason}")
+    if len(skipped) > MAX_SKIP_WARNINGS:
+        await ctx.warning(
+            f"Skipped {len(skipped)} IPs total; per-IP details logged for the first "
+            f"{MAX_SKIP_WARNINGS}. The structured response carries up to "
+            f"{MAX_SKIPPED_IPS_REPORTED} skipped entries with reasons."
+        )
 
     return valid, skipped
 
@@ -409,6 +500,15 @@ async def _do_batch_lookup(
     )
 
     return ordered_results
+
+
+def _build_skipped_list(
+    skipped: list[tuple[str, str]],
+) -> tuple[list[SkippedIP], bool]:
+    """Convert filter results into a capped SkippedIP list plus a truncation flag."""
+    truncated = len(skipped) > MAX_SKIPPED_IPS_REPORTED
+    capped = skipped[:MAX_SKIPPED_IPS_REPORTED]
+    return [SkippedIP(ip=ip, reason=reason) for ip, reason in capped], truncated
 
 
 @mcp.tool(
@@ -552,6 +652,7 @@ async def ipinfo_check_residential_proxy(
 @mcp.tool(
     annotations={"readOnlyHint": True, "openWorldHint": True},
     meta={"introduced_in": "0.5.0"},
+    timeout=MAP_TOOL_TIMEOUT_SECONDS,
 )
 async def ipinfo_generate_map_url(
     ips: Annotated[
@@ -564,11 +665,12 @@ async def ipinfo_generate_map_url(
         ),
     ],
     ctx: Context = CurrentContext(),
-) -> str:
-    """Generate a URL to an interactive map visualization of IP addresses.
+) -> MapResult:
+    """Generate an interactive map visualization for a set of IP addresses.
 
-    Creates a map on ipinfo.io showing the geographic locations of the provided
-    IP addresses. The map is interactive and can be shared.
+    Submits the IPs to ipinfo.io's map endpoint and returns a structured
+    MapResult containing the URL, the count that made the map, the IPs that
+    were filtered out (with reasons), and a truncation flag.
 
     Common use cases:
     - Visualize geographic distribution of server logs
@@ -576,13 +678,17 @@ async def ipinfo_generate_map_url(
     - Display IP address clusters for security analysis
     - Geographic visualization of network traffic
 
-    Returns a URL to the interactive map that can be opened in a browser.
+    Response shape (MapResult):
+    - url: HttpUrl to the interactive map
+    - mapped_ip_count: Number of IPs that made it onto the map
+    - skipped_ips: List of (ip, reason) entries for inputs that were filtered;
+      capped at 100 entries
+    - skipped_count: Total filtered count, even when the list is truncated
+    - truncated: True when skipped_ips was capped
 
     Errors are JSON-encoded ToolErrorEnvelopes (`too_many_ips`, `no_valid_ips`,
-    upstream `api_error` / `timeout` / `unknown_error`).
-
-    Note: Invalid or special IPs (private, loopback, etc.) are filtered out
-    before the map request is sent.
+    upstream `api_error` / `timeout` / `auth_invalid` / `auth_insufficient_scope`
+    / `quota_exceeded` / `unknown_error`).
     """
     if len(ips) > MAX_LOOKUP_IPS:
         # Schema enforces the cap, but defense-in-depth covers callers that
@@ -600,7 +706,7 @@ async def ipinfo_generate_map_url(
             },
         )
 
-    valid_ips, _ = await _filter_valid_ips(ips, ctx)
+    valid_ips, skipped = await _filter_valid_ips(ips, ctx)
 
     if not valid_ips:
         _raise_envelope(
@@ -608,7 +714,10 @@ async def ipinfo_generate_map_url(
             "No valid IP addresses to map; all inputs were filtered as invalid or special-use.",
             temporary=False,
             field="ips",
-            repair={"hint": "Provide at least one public IPv4 or IPv6 address."},
+            repair={
+                "hint": "Provide at least one public IPv4 or IPv6 address.",
+                "skipped_count": len(skipped),
+            },
         )
 
     await ctx.info(f"Generating map for {len(valid_ips)} IP address(es)")
@@ -616,10 +725,20 @@ async def ipinfo_generate_map_url(
     try:
         url = await ipinfo_get_map_url(valid_ips)
         await ctx.info("Map URL generated successfully")
-        return url
     except Exception as e:
         await ctx.error(f"Map generation failed: {e}")
         _raise_from_upstream(e)
+
+    skipped_entries, truncated = _build_skipped_list(skipped)
+    return MapResult.model_validate(
+        {
+            "url": url,
+            "mapped_ip_count": len(valid_ips),
+            "skipped_ips": skipped_entries,
+            "skipped_count": len(skipped),
+            "truncated": truncated,
+        }
+    )
 
 
 # --- Deprecated aliases ------------------------------------------------------
@@ -710,5 +829,11 @@ async def get_map_url(
     ],
     ctx: Context = CurrentContext(),
 ) -> str:
-    """[DEPRECATED in 0.5.0 — use ipinfo_generate_map_url. Removed in 0.6.0.]"""
-    return await ipinfo_generate_map_url(ips=ips, ctx=ctx)
+    """[DEPRECATED in 0.5.0 — use ipinfo_generate_map_url. Removed in 0.6.0.]
+
+    Returns just the bare map URL string for 0.4.x cached-client parity.
+    Callers wanting structured skip/truncation metadata should call
+    ipinfo_generate_map_url directly.
+    """
+    result = await ipinfo_generate_map_url(ips=ips, ctx=ctx)
+    return str(result.url)

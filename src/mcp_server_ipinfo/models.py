@@ -337,3 +337,37 @@ class IPDetails(BaseModel):
     # Metadata
     ts_retrieved: str | None = None
     """Timestamp when this lookup was performed (UTC ISO format)"""
+
+
+class SkippedIP(BaseModel):
+    """A single input IP that was filtered out before reaching the upstream API."""
+
+    ip: str
+    """The original input string (preserved before normalization for traceability)."""
+
+    reason: str
+    """Readable explanation (e.g., 'private IP address. Geolocation is not available.')."""
+
+
+class MapResult(BaseModel):
+    """Structured response from ``ipinfo_generate_map_url``.
+
+    Replaces the bare-URL string return so agents can see how many of the
+    submitted IPs actually made the map, and which were filtered out (with
+    reasons), without re-validating client-side.
+    """
+
+    url: HttpUrl
+    """URL of the interactive map on ipinfo.io."""
+
+    mapped_ip_count: int
+    """Number of IPs that made it onto the map (after dedup, normalization, and validation)."""
+
+    skipped_ips: list[SkippedIP] = Field(default_factory=list)
+    """Per-IP filter reasons. Capped at 100 entries; ``truncated`` indicates overflow."""
+
+    skipped_count: int
+    """Total number of IPs filtered out, even when ``skipped_ips`` is truncated."""
+
+    truncated: bool
+    """True when ``skipped_ips`` was capped at 100 because more were filtered."""
