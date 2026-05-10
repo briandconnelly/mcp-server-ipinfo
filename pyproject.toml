@@ -50,6 +50,9 @@ mcp-server-ipinfo = "mcp_server_ipinfo.server:mcp.run"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.sdist]
+exclude = ["tests/smoke", "tests/smoke/**"]
+
 [tool.ty.src]
 exclude = ["tests/"]
 
@@ -57,7 +60,10 @@ exclude = ["tests/"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "--cov=mcp_server_ipinfo --cov-report=term-missing"
+addopts = "--cov=mcp_server_ipinfo --cov-report=term-missing -m 'not smoke'"
+markers = [
+    "smoke: live-API smoke tests; require IPINFO_API_TOKEN; opt in with `pytest -m smoke --no-cov`",
+]
 
 [tool.coverage.run]
 source = ["src/mcp_server_ipinfo"]
