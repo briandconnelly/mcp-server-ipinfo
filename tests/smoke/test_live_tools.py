@@ -16,16 +16,25 @@ from fastmcp.exceptions import ToolError
 pytestmark = pytest.mark.smoke
 
 # Envelope codes that indicate transient upstream conditions, not bugs in
-# this server. When the smoke run hits one of these, skip the test instead
-# of failing — the structured contract still held (we got a valid envelope),
-# but verifying the success path requires the upstream to be cooperative.
-_TRANSIENT_CODES = frozenset({"quota_exceeded", "timeout"})
+# this server. When the smoke run hits one of these AND the envelope is
+# marked temporary=True, skip the test instead of failing — the structured
+# contract still held (we got a valid envelope), but verifying the success
+# path requires the upstream to be cooperative. ``api_error`` is in the set
+# because the server's upstream classifier maps 5xx responses to
+# ``api_error`` with ``temporary=True``; a non-temporary ``api_error`` (4xx
+# the classifier doesn't otherwise recognize) is still a real failure.
+_TRANSIENT_CODES = frozenset({"quota_exceeded", "timeout", "api_error"})
 
 
 def _parse_envelope(err: ToolError) -> dict:
     """Extract the JSON-encoded envelope from a ToolError message."""
     msg = str(err)
     return json.loads(msg[msg.index("{") :])
+
+
+def _is_transient(env: dict) -> bool:
+    """Whether an envelope represents a transient upstream condition."""
+    return env.get("code") in _TRANSIENT_CODES and env.get("temporary") is True
 
 
 def _skip_if_transient(err: ToolError) -> None:
@@ -36,7 +45,7 @@ def _skip_if_transient(err: ToolError) -> None:
     accept "API was unhappy" as a non-failure outcome.
     """
     env = _parse_envelope(err)
-    if env.get("code") in _TRANSIENT_CODES and env.get("temporary") is True:
+    if _is_transient(env):
         pytest.skip(f"transient envelope from upstream: {env['code']!r} — re-run later")
     raise err
 
@@ -99,7 +108,7 @@ async def test_check_residential_proxy_envelope_path(client):
         )
     except ToolError as e:
         env = _parse_envelope(e)
-        if env.get("code") in _TRANSIENT_CODES:
+        if _is_transient(env):
             pytest.skip(f"transient envelope: {env['code']!r}")
         assert env["code"] in {"auth_invalid", "auth_insufficient_scope"}, (
             f"unexpected envelope code: {env['code']!r}"
