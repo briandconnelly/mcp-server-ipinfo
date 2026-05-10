@@ -30,17 +30,14 @@ def _flatten_nested_response(details: dict) -> dict:
     ``mobile`` and ``anonymous`` blocks (Plus only) are intentionally left untouched
     until their field shapes can be verified against a real Plus response.
     """
-    if not isinstance(details, dict):
-        return details
-
     out = dict(details)
 
     geo = out.pop("geo", None)
     if isinstance(geo, dict):
         geo = dict(geo)
+        if "country" in geo:
+            geo["country_name"] = geo.pop("country")
         if "country_code" in geo:
-            if "country" in geo:
-                geo.setdefault("country_name", geo.pop("country"))
             geo["country"] = geo.pop("country_code")
         for key, value in geo.items():
             out.setdefault(key, value)

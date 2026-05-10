@@ -222,19 +222,17 @@ class TestFlattenNestedResponse:
         assert flat["asn"]["asn"] == "AS-EXISTING"
         assert "as" not in flat
 
-    def test_missing_country_code_leaves_country_alone(self):
-        """If geo lacks country_code, don't reshape country fields (avoid bad mapping)."""
+    def test_geo_country_is_full_name_when_country_code_missing(self):
+        """Per Core/Plus convention, geo.country is the full country name; without
+        country_code we still map it to country_name (never to top-level country,
+        which would fail IPDetails' alpha-2 regex)."""
         nested = {
             "ip": "8.8.8.8",
-            "geo": {"city": "Mountain View", "country": "US"},
+            "geo": {"city": "Mountain View", "country": "United States"},
         }
         flat = _flatten_nested_response(nested)
-        assert flat["country"] == "US"
-        assert "country_name" not in flat
-
-    def test_non_dict_input_returned_as_is(self):
-        """Defensive: unexpected input shape is returned unchanged rather than crashing."""
-        assert _flatten_nested_response(None) is None  # type: ignore[arg-type]
+        assert flat["country_name"] == "United States"
+        assert "country" not in flat
 
     def test_ipdetails_constructs_from_core_shape(self):
         """End-to-end: a Core-shaped response yields a valid IPDetails."""
