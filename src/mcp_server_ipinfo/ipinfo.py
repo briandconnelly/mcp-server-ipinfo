@@ -14,6 +14,41 @@ def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _flatten_nested_response(details: dict) -> dict:
+    """Flatten Core/Plus API nested response shape onto the flat IPDetails schema.
+
+    Core and Plus responses nest geolocation under ``geo`` and AS info under ``as``;
+    the standard endpoint puts these at the top level. This promotes nested keys to
+    the top level so a single Pydantic schema works for both, and renames the ``as``
+    key (a Python keyword) to ``asn``.
+
+    The ``geo`` block uses ``country`` for the full country name and
+    ``country_code`` for the ISO alpha-2; the flat schema uses ``country`` for the
+    alpha-2 and ``country_name`` for the full name, so those are remapped.
+    Top-level keys win over nested keys on conflict.
+
+    ``mobile`` and ``anonymous`` blocks (Plus only) are intentionally left untouched
+    until their field shapes can be verified against a real Plus response.
+    """
+    out = dict(details)
+
+    geo = out.pop("geo", None)
+    if isinstance(geo, dict):
+        geo = dict(geo)
+        if "country" in geo:
+            geo["country_name"] = geo.pop("country")
+        if "country_code" in geo:
+            geo["country"] = geo.pop("country_code")
+        for key, value in geo.items():
+            out.setdefault(key, value)
+
+    as_block = out.pop("as", None)
+    if as_block is not None and "asn" not in out:
+        out["asn"] = as_block
+
+    return out
+
+
 async def create_async_handler(**kwargs) -> ipinfo.AsyncHandler:
     """
     Create an async IPInfo handler.
@@ -49,7 +84,9 @@ async def ipinfo_lookup(handler: ipinfo.AsyncHandler, ip: str | None) -> IPDetai
         ValueError: If the provided IP address is invalid
     """
     details = await handler.getDetails(ip_address=ip)
-    return IPDetails(**details.all, ts_retrieved=_utc_timestamp())
+    return IPDetails(
+        **_flatten_nested_response(details.all), ts_retrieved=_utc_timestamp()
+    )
 
 
 async def ipinfo_batch_lookup(
@@ -79,7 +116,7 @@ async def ipinfo_batch_lookup(
 
     ts = _utc_timestamp()
     return {
-        ip: IPDetails(**details.all, ts_retrieved=ts)
+        ip: IPDetails(**_flatten_nested_response(details.all), ts_retrieved=ts)
         for ip, details in results.items()
         if hasattr(details, "all")  # Skip failed lookups
     }

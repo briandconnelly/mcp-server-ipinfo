@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from mcp_server_ipinfo.ipinfo import _flatten_nested_response
 from mcp_server_ipinfo.models import IPDetails, ResidentialProxyDetails
 
 
@@ -139,3 +140,125 @@ class TestResidentialProxyDetails:
         assert details.last_seen is None
         assert details.percent_days_seen is None
         assert details.service is None
+
+
+class TestFlattenNestedResponse:
+    """Tests for the Core/Plus -> flat IPDetails adapter."""
+
+    def test_flat_response_unchanged(self):
+        """Standard endpoint responses (already flat) pass through with no changes."""
+        flat = {
+            "ip": "8.8.8.8",
+            "city": "Mountain View",
+            "country": "US",
+            "country_name": "United States",
+            "org": "AS15169 Google LLC",
+        }
+        assert _flatten_nested_response(flat) == flat
+
+    def test_geo_block_promoted_to_top_level(self):
+        """Core-style nested geo block is flattened so IPDetails sees top-level fields."""
+        nested = {
+            "ip": "8.8.8.8",
+            "geo": {
+                "city": "Mountain View",
+                "region": "California",
+                "region_code": "CA",
+                "country": "United States",
+                "country_code": "US",
+                "loc": "37.3860,-122.0838",
+                "postal": "94035",
+                "timezone": "America/Los_Angeles",
+            },
+        }
+        flat = _flatten_nested_response(nested)
+
+        assert "geo" not in flat
+        assert flat["city"] == "Mountain View"
+        assert flat["region"] == "California"
+        assert flat["region_code"] == "CA"
+        assert flat["country"] == "US"
+        assert flat["country_name"] == "United States"
+        assert flat["loc"] == "37.3860,-122.0838"
+        assert flat["postal"] == "94035"
+        assert flat["timezone"] == "America/Los_Angeles"
+
+    def test_as_block_renamed_to_asn(self):
+        """The 'as' key (a Python keyword) is renamed to 'asn' for IPDetails."""
+        nested = {
+            "ip": "8.8.8.8",
+            "as": {
+                "asn": "AS15169",
+                "name": "Google LLC",
+                "domain": "google.com",
+                "type": "hosting",
+            },
+        }
+        flat = _flatten_nested_response(nested)
+
+        assert "as" not in flat
+        assert flat["asn"]["asn"] == "AS15169"
+        assert flat["asn"]["name"] == "Google LLC"
+
+    def test_top_level_wins_over_nested(self):
+        """If a top-level key is already set, the geo block does not overwrite it."""
+        nested = {
+            "ip": "8.8.8.8",
+            "city": "Top-level Wins",
+            "geo": {"city": "Should Be Ignored", "country_code": "US"},
+        }
+        flat = _flatten_nested_response(nested)
+        assert flat["city"] == "Top-level Wins"
+        assert flat["country"] == "US"
+
+    def test_existing_asn_not_overwritten(self):
+        """If both 'as' and 'asn' are present, existing 'asn' wins."""
+        nested = {
+            "ip": "8.8.8.8",
+            "asn": {"asn": "AS-EXISTING"},
+            "as": {"asn": "AS-NESTED"},
+        }
+        flat = _flatten_nested_response(nested)
+        assert flat["asn"]["asn"] == "AS-EXISTING"
+        assert "as" not in flat
+
+    def test_geo_country_is_full_name_when_country_code_missing(self):
+        """Per Core/Plus convention, geo.country is the full country name; without
+        country_code we still map it to country_name (never to top-level country,
+        which would fail IPDetails' alpha-2 regex)."""
+        nested = {
+            "ip": "8.8.8.8",
+            "geo": {"city": "Mountain View", "country": "United States"},
+        }
+        flat = _flatten_nested_response(nested)
+        assert flat["country_name"] == "United States"
+        assert "country" not in flat
+
+    def test_ipdetails_constructs_from_core_shape(self):
+        """End-to-end: a Core-shaped response yields a valid IPDetails."""
+        nested = {
+            "ip": "8.8.8.8",
+            "geo": {
+                "city": "Mountain View",
+                "region": "California",
+                "region_code": "CA",
+                "country": "United States",
+                "country_code": "US",
+                "loc": "37.3860,-122.0838",
+            },
+            "as": {
+                "asn": "AS15169",
+                "name": "Google LLC",
+                "domain": "google.com",
+                "type": "hosting",
+            },
+        }
+        details = IPDetails(**_flatten_nested_response(nested))
+        assert str(details.ip) == "8.8.8.8"
+        assert details.city == "Mountain View"
+        assert details.country == "US"
+        assert details.country_name == "United States"
+        assert details.region_code == "CA"
+        assert details.asn is not None
+        assert details.asn.asn == "AS15169"
+        assert details.asn.name == "Google LLC"
