@@ -146,7 +146,12 @@ async def ipinfo_resproxy_lookup(
     )
 
 
-async def ipinfo_get_map_url(ips: list[str]) -> str:
+DEFAULT_MAP_TIMEOUT_SECONDS = 30.0
+
+
+async def ipinfo_get_map_url(
+    ips: list[str], timeout: float = DEFAULT_MAP_TIMEOUT_SECONDS
+) -> str:
     """
     Get a URL to an interactive map visualization of IP addresses.
 
@@ -154,12 +159,15 @@ async def ipinfo_get_map_url(ips: list[str]) -> str:
 
     Args:
         ips: List of IP address strings to visualize on the map.
+        timeout: Request timeout in seconds. Bounds the HTTP call so a hung
+            upstream cannot block the tool indefinitely.
 
     Returns:
         URL to the interactive map.
 
     Raises:
         httpx.HTTPStatusError: If the API request fails.
+        httpx.TimeoutException: If the request exceeds ``timeout``.
     """
     headers = {
         "content-type": "application/json",
@@ -169,7 +177,7 @@ async def ipinfo_get_map_url(ips: list[str]) -> str:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
             f"{IPINFO_API_URL}/map?cli=1",
             json=ips,

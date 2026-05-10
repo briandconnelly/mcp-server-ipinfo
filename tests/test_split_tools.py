@@ -102,6 +102,7 @@ class TestRenamedTools:
     async def test_ipinfo_generate_map_url(self, mock_context_with_state):
         from unittest.mock import AsyncMock, MagicMock, patch
 
+        from mcp_server_ipinfo.models import MapResult
         from mcp_server_ipinfo.server import ipinfo_generate_map_url
 
         mock_response = MagicMock()
@@ -114,10 +115,12 @@ class TestRenamedTools:
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_response
             )
-            url = await ipinfo_generate_map_url(
+            result = await ipinfo_generate_map_url(
                 ips=["8.8.8.8", "1.1.1.1"], ctx=mock_context_with_state
             )
-        assert url == "https://ipinfo.io/map/demo/xyz"
+        assert isinstance(result, MapResult)
+        assert str(result.url) == "https://ipinfo.io/map/demo/xyz"
+        assert result.mapped_ip_count == 2
 
 
 class TestDeprecatedGetIpDetails:

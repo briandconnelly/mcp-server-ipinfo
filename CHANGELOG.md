@@ -21,7 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server `instructions` document the structured error contract and list both current and deprecated tool names
 
 ### Deprecated
-- `get_ip_details`, `get_residential_proxy_info`, `get_map_url` retained as forwarding aliases tagged `deprecated` with `meta.replaced_by`; **scheduled for removal in 0.6.0**
+- `get_ip_details`, `get_residential_proxy_info`, `get_map_url` retained as forwarding aliases tagged `deprecated` with `meta.replaced_by`; **scheduled for removal in 0.6.0**. The `get_map_url` alias preserves the bare-URL `str` return shape from 0.4.x; new code should call `ipinfo_generate_map_url` directly to receive the structured `MapResult`.
+
+### Changed (continued)
+- **Breaking for `ipinfo_generate_map_url`:** the tool now returns a structured `MapResult` (`url`, `mapped_ip_count`, `skipped_ips`, `skipped_count`, `truncated`) instead of a bare URL string. Agents see how many of the submitted IPs made the map and which were filtered out, with a per-IP reason. `skipped_ips` is capped at 100 entries; `truncated=True` signals overflow. The deprecated `get_map_url` alias still returns just the URL string for cached-client parity.
+
+### Added (continued)
+- `MapResult` and `SkippedIP` Pydantic models for the structured map response
+- httpx exception classification: `httpx.TimeoutException` → `timeout` envelope code, `httpx.HTTPStatusError` → status-aware codes (`auth_invalid` for 401, `auth_insufficient_scope` for 403, `quota_exceeded` for 429, `api_error` for other 4xx/5xx)
+- Explicit timeouts on the map path: `httpx.AsyncClient(timeout=30s)` at the HTTP layer plus FastMCP's `@mcp.tool(timeout=60s)` as framework-level defense-in-depth so a hung upstream cannot block the tool indefinitely
 
 ## [0.4.0] - 2026-04-11
 
