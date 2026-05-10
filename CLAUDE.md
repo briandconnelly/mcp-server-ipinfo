@@ -13,3 +13,15 @@
 ## FastMCP Documentation
 
 Use the `mcp__fastmcp__search_fast_mcp` tool to search FastMCP documentation for API references, patterns, and examples when working on this codebase.
+
+## Smoke tests
+
+Live-API smoke tests in `tests/smoke/` exercise each production tool against the real IPInfo API. They are excluded from the default `pytest` run (via the `-m 'not smoke'` filter) and from the published wheel and sdist.
+
+Before tagging a release, run:
+
+    IPINFO_API_TOKEN=<your-token> uv run pytest -m smoke --no-cov
+
+Without the token the tests skip cleanly. Each run makes ~6 live API calls. The smoke suite catches upstream contract changes that mocked unit tests cannot.
+
+Transient upstream conditions auto-skip rather than fail: any envelope with `temporary: true` and a `code` in `{quota_exceeded, timeout, api_error}` (the last covers IPInfo 5xx). If a smoke test reports SKIPPED with a "transient envelope" reason, re-run it; only persistent failures should be filed as bugs.
