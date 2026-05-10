@@ -47,67 +47,49 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[dict]:
 mcp = FastMCP(
     name="IP Address Geolocation and Internet Service Provider Lookup",
     instructions="""
-    This MCP server looks up information about IPv4 and IPv6 addresses via the
-    IPInfo API: geographic location (country, region, city, coordinates), the
-    owning organization / ISP, and (on paid plans) ASN, privacy/VPN/Tor/proxy
-    detection, mobile carrier, company, abuse contacts, and hosted domains.
+    Geolocate IPv4/IPv6 addresses via ipinfo.io: location, ISP, ASN, and
+    (on paid plans) privacy/VPN/Tor/proxy flags, carrier, company, abuse
+    contacts, hosted domains.
 
-    Tools (current, ipinfo_-prefixed):
-    - ipinfo_lookup_my_ip: Geolocate the calling client's own IP (no arguments).
-    - ipinfo_lookup_ips: Geolocate one or more specific IPs. Supports
-      detail="summary" to null heavy nested blocks for batch token savings.
-    - ipinfo_check_residential_proxy: Check whether an IP is a known residential
-      proxy exit (Enterprise add-on; tagged "enterprise").
-    - ipinfo_generate_map_url: Build an interactive ipinfo.io map URL for a set
-      of IPs. Returns a structured MapResult.
+    Tools:
+    - ipinfo_lookup_my_ip(): the calling client's own IP (no args).
+    - ipinfo_lookup_ips(ips, detail="full"): batch lookup; detail="summary"
+      nulls heavy nested blocks (continent, country_flag*, country_currency,
+      abuse, domains) for token savings while preserving shape.
+    - ipinfo_check_residential_proxy(ip): Enterprise residential-proxy add-on
+      required (tagged "enterprise").
+    - ipinfo_generate_map_url(ips): returns a MapResult
+      {url, mapped_ip_count, skipped_ips (capped at 100), skipped_count, truncated}.
 
-    Deprecated aliases (forwarding wrappers, removed in 0.6.0): get_ip_details,
+    Deprecated forwarding aliases, removed in 0.6.0: get_ip_details,
     get_residential_proxy_info, get_map_url.
 
-    What this server does NOT do:
-    - Resolve hostnames or domains to IPs (use DNS tooling).
-    - Look up IP ranges, CIDR blocks, or BGP routes.
-    - Provide historical or time-series IP data — every result is the current
-      snapshot from IPInfo.
-    - Geolocate private, loopback, link-local, multicast, or other reserved
-      addresses; these are filtered at the boundary with `special_ip_unsupported`.
-    - Geolocate the actual user behind a VPN, proxy, Tor relay, or cloud host;
-      results reflect the exit point's location, not the originating user's.
-    - Score, classify, or otherwise attribute IPs as "malicious"; only the raw
-      privacy/proxy signals are returned.
+    NOT in scope: DNS/hostname resolution; CIDR or BGP lookups; historical or
+    time-series data; private/loopback/multicast/link-local/reserved IPs
+    (filtered at boundary as `special_ip_unsupported`); deanonymizing users
+    behind VPNs/proxies/Tor (results reflect the exit point); malice scoring.
 
-    Plan tiers (set IPINFO_API_TOKEN to enable):
-    - No token (free Lite): country, country_code, continent, ASN basics.
-    - Core: full geolocation, ASN details, privacy/VPN/proxy/Tor/hosting flags.
-    - Plus: adds carrier and company data.
-    - Enterprise: adds domains and abuse contacts; the residential-proxy add-on
-      is what powers ipinfo_check_residential_proxy.
+    Plan tiers (set IPINFO_API_TOKEN):
+    - no token: country, country_code, continent, ASN basics
+    - Core: + full geolocation, ASN details, privacy/VPN/proxy/Tor/hosting flags
+    - Plus: + carrier, company
+    - Enterprise: + domains, abuse, residential-proxy add-on
 
-    Caching:
-    - IP lookup results are cached in-memory for IPINFO_CACHE_TTL seconds
-      (default 3600, i.e. one hour). Up to IPINFO_CACHE_SIZE entries (default
-      4096) are retained; the oldest are evicted.
-    - Cached records keep their original `ts_retrieved` timestamp; that field
-      reflects when the lookup was first performed, not when the cached value
-      was returned. Compare against the current time to gauge freshness.
+    Cache (lookup tools only — not residential-proxy or map): in-memory,
+    IPINFO_CACHE_TTL seconds (default 3600), max IPINFO_CACHE_SIZE entries
+    (default 4096), oldest evicted first. `ts_retrieved` on a cached record
+    is the original lookup time — compare against now for freshness.
 
-    Transport notes:
-    - Stdio is the default transport; ipinfo_lookup_my_ip resolves to the IP
-      that ipinfo.io sees from this MCP server's outbound connection (typically
-      the host's egress IP), not the end user's IP. Use ipinfo_lookup_ips when
-      the caller already has the target IP.
+    Transport: on stdio, ipinfo_lookup_my_ip resolves to this server's
+    outbound IP, not the end user's. Use ipinfo_lookup_ips with an explicit
+    IP when the caller already has one.
 
-    Errors:
-    All tool errors carry a JSON-encoded ToolErrorEnvelope in the error message
-    with a stable `code` (one of: auth_invalid, auth_insufficient_scope,
-    quota_exceeded, timeout, api_error, invalid_ip_address, special_ip_unsupported,
-    no_valid_ips, too_many_ips, unknown_error), a `temporary` flag, an optional
-    `retry_after_ms`, and a `repair` hint. Parse the error string as JSON to branch.
-
-    Address formats:
-    IPv4 = four decimal octets separated by dots (e.g., 8.8.8.8).
-    IPv6 = eight groups of four hexadecimal digits separated by colons
-    (e.g., 2001:4860:4860::8888).
+    Errors: every ToolError message is JSON-encoded with a stable `code`
+    (auth_invalid, auth_insufficient_scope, quota_exceeded, timeout,
+    api_error, invalid_ip_address, special_ip_unsupported, no_valid_ips,
+    too_many_ips, unknown_error), a `temporary` flag, an optional
+    `retry_after_ms`, and a `repair` hint. Parse the message as JSON and
+    branch on `code`.
     """,
     lifespan=app_lifespan,
 )
@@ -552,15 +534,11 @@ def _build_skipped_list(
 async def ipinfo_lookup_my_ip(
     ctx: Context = CurrentContext(),
 ) -> IPDetails:
-    """Return geolocation and ISP details for the calling client's own IP address.
+    """Geolocate the calling client's own IP. No arguments.
 
-    Useful when an agent wants to ground "where am I" without taking the IP as
-    an argument. The result depends on the transport: on HTTP transports the
-    IPInfo API observes the requesting party's IP; on stdio the result reflects
-    the IP that the IPInfo API sees from this MCP server's outbound connection.
-    For looking up specific IPs, use `ipinfo_lookup_ips` instead.
-
-    Errors are JSON-encoded ToolErrorEnvelopes.
+    On stdio transports the result is this server's outbound IP, not the
+    end user's. Use `ipinfo_lookup_ips` when the caller already has a
+    specific IP. Errors raise ToolError with a JSON-encoded envelope.
     """
     handler, cache = _get_handler_and_cache(ctx)
     return await _do_my_ip_lookup(handler, cache, ctx)
@@ -574,11 +552,7 @@ async def ipinfo_lookup_ips(
     ips: Annotated[
         list[str],
         Field(
-            description=(
-                "List of IPv4 or IPv6 addresses to look up. Must contain at least 1 entry; "
-                "max 500,000. Invalid or special-use IPs (private, loopback, etc.) are filtered "
-                "with warnings."
-            ),
+            description="IPv4/IPv6 addresses to look up. Invalid or special-use IPs are filtered.",
             min_length=1,
             max_length=MAX_LOOKUP_IPS,
             examples=[["8.8.8.8"], ["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
@@ -588,39 +562,22 @@ async def ipinfo_lookup_ips(
         DetailLevel,
         Field(
             description=(
-                "Response density. 'full' (default) returns every IPDetails field. "
-                "'summary' nulls heavy nested blocks (continent, country_flag*, "
-                "country_currency, abuse, domains) for batch token savings while "
-                "preserving shape parity."
+                "'full' returns every IPDetails field; 'summary' nulls heavy "
+                "nested blocks (continent, country_flag*, country_currency, "
+                "abuse, domains) for batch token savings while preserving shape."
             ),
         ),
     ] = "full",
     ctx: Context = CurrentContext(),
 ) -> list[IPDetails]:
-    """Look up geolocation, ISP, and network details for one or more IP addresses.
+    """Geolocate one or more IPs and return ISP/ASN details.
 
-    Returns a list of IPDetails preserving input order (after dedup and
-    invalid-IP filtering). Use the `ip` field on each result to match back to
-    your input.
-
-    Common use cases:
-    - Investigate one or more IP addresses for security analysis
-    - Look up ISP and hosting provider information for a known address
-    - Analyze server logs to identify visitor locations
-    - Geographic distribution analysis across many IPs
-
-    Detail toggle:
-    - `detail="full"` (default): every available field, including decorative
-      blocks like continent metadata and country flags.
-    - `detail="summary"`: same shape, but heavy nested blocks are nulled out.
-      Cuts response size for large batches without changing the parser contract.
-
-    Errors are JSON-encoded ToolErrorEnvelopes with stable `code` values
-    (invalid_ip_address, no_valid_ips, too_many_ips, auth_invalid,
-    auth_insufficient_scope, quota_exceeded, timeout, api_error, unknown_error).
-
-    Note: Some fields (asn, privacy, carrier, company, abuse, domains) require
-    IPINFO_API_TOKEN with the appropriate plan tier.
+    Returns a list of IPDetails in input order (after dedup and invalid-IP
+    filtering). Match results back to your input via the `ip` field. Capped
+    at 500,000 IPs per call (`too_many_ips` if exceeded). Higher plan tiers
+    populate more fields; see the server instructions for the
+    Lite/Core/Plus/Enterprise tier mapping. Errors raise ToolError with a
+    JSON-encoded envelope.
     """
     handler, cache = _get_handler_and_cache(ctx)
     results = await _do_batch_lookup(handler, cache, ips, ctx)
@@ -638,35 +595,20 @@ async def ipinfo_check_residential_proxy(
     ip: Annotated[
         str,
         Field(
-            description="The IP address to check for residential proxy usage (IPv4 or IPv6).",
+            description="IPv4/IPv6 address to classify.",
             examples=["142.250.80.46"],
         ),
     ],
     ctx: Context = CurrentContext(),
 ) -> ResidentialProxyDetails:
-    """Check whether an IP address belongs to a residential proxy network.
+    """Classify whether an IP is a known residential-proxy exit node.
 
-    Residential proxies route traffic through real residential IP addresses,
-    making them harder to detect than datacenter proxies. This tool identifies
-    such IPs and returns details about the proxy service.
-
-    Returns:
-    - ip: The checked IP address
-    - last_seen: Last date the proxy was active (YYYY-MM-DD)
-    - percent_days_seen: Activity percentage over the last 7-day window
-    - service: Name of the residential proxy service (None if not a known proxy)
-
-    Common use cases:
-    - Fraud detection and prevention
-    - Bot detection
-    - Ad fraud analysis
-    - Security investigations
-
-    Errors are JSON-encoded ToolErrorEnvelopes. A 403 from IPInfo surfaces as
-    `auth_insufficient_scope` so agents can distinguish "needs a token" from
-    "token lacks the residential-proxy add-on".
-
-    Note: Requires IPINFO_API_TOKEN with the residential-proxy add-on enabled.
+    Returns ResidentialProxyDetails with `is_residential_proxy` (the canonical
+    yes/no), and — when true — `service`, `last_seen` (YYYY-MM-DD), and
+    `percent_days_seen` over a 7-day window. Useful for fraud, bot, and
+    ad-fraud detection. Requires IPINFO_API_TOKEN with the Enterprise
+    residential-proxy add-on; absence surfaces as `auth_insufficient_scope`
+    (distinct from `auth_invalid` for a missing/wrong token).
     """
     handler, _ = _get_handler_and_cache(ctx)
 
@@ -692,7 +634,7 @@ async def ipinfo_generate_map_url(
     ips: Annotated[
         list[str],
         Field(
-            description="List of IP addresses to visualize on a map (IPv4 or IPv6). Maximum 500,000 IPs.",
+            description="IPv4/IPv6 addresses to plot. Invalid or special-use IPs are filtered.",
             min_length=1,
             max_length=MAX_LOOKUP_IPS,
             examples=[["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
@@ -700,29 +642,14 @@ async def ipinfo_generate_map_url(
     ],
     ctx: Context = CurrentContext(),
 ) -> MapResult:
-    """Generate an interactive map visualization for a set of IP addresses.
+    """Build an interactive ipinfo.io map for a set of IPs.
 
-    Submits the IPs to ipinfo.io's map endpoint and returns a structured
-    MapResult containing the URL, the count that made the map, the IPs that
-    were filtered out (with reasons), and a truncation flag.
-
-    Common use cases:
-    - Visualize geographic distribution of server logs
-    - Create shareable maps of user locations
-    - Display IP address clusters for security analysis
-    - Geographic visualization of network traffic
-
-    Response shape (MapResult):
-    - url: HttpUrl to the interactive map
-    - mapped_ip_count: Number of IPs that made it onto the map
-    - skipped_ips: List of (ip, reason) entries for inputs that were filtered;
-      capped at 100 entries
-    - skipped_count: Total filtered count, even when the list is truncated
-    - truncated: True when skipped_ips was capped
-
-    Errors are JSON-encoded ToolErrorEnvelopes (`too_many_ips`, `no_valid_ips`,
-    upstream `api_error` / `timeout` / `auth_invalid` / `auth_insufficient_scope`
-    / `quota_exceeded` / `unknown_error`).
+    Returns MapResult{url, mapped_ip_count, skipped_ips, skipped_count,
+    truncated}. `skipped_ips` is a list of {ip, reason} entries for filtered
+    inputs, capped at 100; `truncated` flags overflow. `skipped_count` is the
+    true total even when the list is capped, so `mapped_ip_count +
+    skipped_count` equals the input length. Errors raise ToolError with a
+    JSON-encoded envelope.
     """
     if len(ips) > MAX_LOOKUP_IPS:
         # Schema enforces the cap, but defense-in-depth covers callers that

@@ -7,37 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-10
+
+This release reshapes the tool surface for better agent ergonomics: structured
+error envelopes with stable codes, a split between "look up my IP" and
+"look up these IPs", a typed `MapResult`, and an `ipinfo_*` naming prefix.
+The previous tool names remain as forwarding aliases scheduled for removal in
+0.6.0.
+
 ### Added
-- `ipinfo_lookup_my_ip` tool for looking up the calling client's own IP (no arguments)
-- `ipinfo_lookup_ips` tool for looking up one or more specified IPs, with a `detail: "summary" | "full"` toggle that nulls heavy nested blocks (`continent`, `country_flag*`, `country_currency`, `abuse`, `domains`) for batch token savings while preserving shape parity
-- `ipinfo_check_residential_proxy` and `ipinfo_generate_map_url` (renamed from the originals)
-- `ToolErrorEnvelope` Pydantic model with stable symbolic codes (`invalid_ip_address`, `special_ip_unsupported`, `no_valid_ips`, `too_many_ips`, `auth_invalid`, `auth_insufficient_scope`, `quota_exceeded`, `timeout`, `api_error`, `unknown_error`); JSON-encoded into every `ToolError` so agents can branch on `code` without parsing prose
-- Per-tool metadata: `meta={"introduced_in": "0.5.0"}` on all new tools; `tags={"enterprise"}` and `meta={"plan_required": "residential_proxy_addon"}` on `ipinfo_check_residential_proxy`
-- Schema-level `maxItems: 500_000` constraint on `ips` arrays so MCP clients can reject oversized inputs without a round-trip
+- `ipinfo_lookup_my_ip()` — no-args tool for the calling client's own IP.
+- `ipinfo_lookup_ips(ips, detail="full")` — list lookup with a `detail`
+  toggle (`"summary"` nulls heavy nested blocks — `continent`, `country_flag*`,
+  `country_currency`, `abuse`, `domains` — for batch token savings while
+  preserving shape parity).
+- `ipinfo_check_residential_proxy(ip)` — renamed from `get_residential_proxy_info`;
+  tagged `enterprise` with `meta.plan_required = "residential_proxy_addon"`.
+- `ipinfo_generate_map_url(ips)` — renamed from `get_map_url`; returns the
+  new structured `MapResult` (`url`, `mapped_ip_count`, `skipped_ips`,
+  `skipped_count`, `truncated`) instead of a bare URL string. `skipped_ips`
+  is capped at 100 entries with `truncated=True` signaling overflow.
+- `ToolErrorEnvelope` with stable codes (`invalid_ip_address`,
+  `special_ip_unsupported`, `no_valid_ips`, `too_many_ips`, `auth_invalid`,
+  `auth_insufficient_scope`, `quota_exceeded`, `timeout`, `api_error`,
+  `unknown_error`); JSON-encoded into every `ToolError` so agents branch on
+  `code` instead of parsing prose. Each envelope carries `temporary`,
+  optional `retry_after_ms`, and a `repair` hint.
+- `ResidentialProxyDetails.is_residential_proxy` — a Pydantic
+  `@computed_field` returning `True` iff `service is not None`; serialized
+  to JSON output so agents see an explicit boolean instead of all-None
+  fields.
+- `MapResult` and `SkippedIP` Pydantic models.
+- Per-tool metadata: `meta={"introduced_in": "0.5.0"}` on every new tool;
+  `tags={"enterprise"}` on `ipinfo_check_residential_proxy`.
+- Schema-level constraints on `ips` arrays: `minItems=1`, `maxItems=500_000`.
+- httpx exception classification covering `httpx.TimeoutException` →
+  `timeout` and `httpx.HTTPStatusError` → status-aware codes (401 →
+  `auth_invalid`, 403 → `auth_insufficient_scope`, 429 → `quota_exceeded`,
+  5xx → temporary `api_error`, other 4xx → non-temporary `api_error`).
+- Map-tool timeouts: `httpx.AsyncClient(timeout=30s)` at the HTTP layer plus
+  `@mcp.tool(timeout=60s)` as framework-level defense-in-depth.
+- `IPINFO_CACHE_SIZE` environment variable for tuning the cache's max-entry
+  count (default `4096`).
+- Expanded server `instructions` with a "what this server does NOT do"
+  section, per-plan-tier capability list, cache TTL/size + `ts_retrieved`
+  freshness semantics, stdio transport caveat for `ipinfo_lookup_my_ip`,
+  and the structured error contract.
+- Field-level documentation on `IPDetails.bogon` (typically null because
+  bogon-like inputs are filtered at the boundary as
+  `special_ip_unsupported`) and `ts_retrieved` on both `IPDetails` and
+  `ResidentialProxyDetails` (clarifying that cached `IPDetails` records
+  preserve the original lookup time, while residential-proxy lookups are
+  not cached).
+- `token=` and `timeout=` keyword-only arguments on the internal
+  `ipinfo_get_map_url` helper; both must now be passed by name.
 
 ### Changed
-- Tool errors now distinguish missing/invalid token (`auth_invalid`) from insufficient plan scope (`auth_insufficient_scope`) instead of collapsing to one opaque message
-- Quota and timeout failures map to `quota_exceeded` / `timeout` codes with `temporary: true` so agents know to retry
-- Server `instructions` document the structured error contract and list both current and deprecated tool names
+- **Breaking** for direct callers of `ipinfo_generate_map_url`: the tool
+  returns `MapResult` instead of a bare URL string. The deprecated
+  `get_map_url` alias preserves the bare-URL `str` return for 0.4.x
+  cached-client parity.
+- Tool errors no longer collapse credential failures: missing/invalid
+  token surfaces as `auth_invalid`, insufficient plan as
+  `auth_insufficient_scope`. Quota and timeout failures carry
+  `temporary: true` so agents know to retry.
+- Per-IP `ctx.warning()` emissions during input filtering are capped at
+  100 with an aggregated summary; a 500K batch with all entries filtered
+  no longer floods logs or risks tripping the 60s tool-level timeout.
 
 ### Deprecated
-- `get_ip_details`, `get_residential_proxy_info`, `get_map_url` retained as forwarding aliases tagged `deprecated` with `meta.replaced_by`; **scheduled for removal in 0.6.0**. The `get_map_url` alias preserves the bare-URL `str` return shape from 0.4.x; new code should call `ipinfo_generate_map_url` directly to receive the structured `MapResult`.
-
-### Changed (continued)
-- **Breaking for `ipinfo_generate_map_url`:** the tool now returns a structured `MapResult` (`url`, `mapped_ip_count`, `skipped_ips`, `skipped_count`, `truncated`) instead of a bare URL string. Agents see how many of the submitted IPs made the map and which were filtered out, with a per-IP reason. `skipped_ips` is capped at 100 entries; `truncated=True` signals overflow. The deprecated `get_map_url` alias still returns just the URL string for cached-client parity.
-
-### Added (continued)
-- `MapResult` and `SkippedIP` Pydantic models for the structured map response
-- httpx exception classification: `httpx.TimeoutException` → `timeout` envelope code, `httpx.HTTPStatusError` → status-aware codes (`auth_invalid` for 401, `auth_insufficient_scope` for 403, `quota_exceeded` for 429, `api_error` for other 4xx/5xx)
-- Explicit timeouts on the map path: `httpx.AsyncClient(timeout=30s)` at the HTTP layer plus FastMCP's `@mcp.tool(timeout=60s)` as framework-level defense-in-depth so a hung upstream cannot block the tool indefinitely
-- `ResidentialProxyDetails.is_residential_proxy`: a Pydantic `@computed_field` that returns `True` iff `service is not None`; serialized to JSON output so agents can branch on a stable boolean instead of inspecting all-None fields
-- `IPINFO_CACHE_SIZE` environment variable for tuning the in-memory cache's max-entry count (default `4096`); previously only `IPINFO_CACHE_TTL` was wired
-- Expanded server `instructions` with a "what this server does NOT do" section (no DNS/CIDR/historical/malice scoring; private IPs filtered at boundary), per-plan-tier capability list, cache TTL/size + `ts_retrieved` semantics, and a stdio-transport caveat for `ipinfo_lookup_my_ip`
+- `get_ip_details`, `get_residential_proxy_info`, `get_map_url` are
+  forwarding aliases tagged `deprecated` with `meta.replaced_by` set —
+  **scheduled for removal in 0.6.0**.
 
 ### Fixed
-- `ipinfo_generate_map_url` now reads the IPInfo token from the handler captured at startup (`handler.access_token`) instead of re-reading `IPINFO_API_TOKEN` on every call; a runtime env mutation can no longer cause the lookup and map paths to disagree on which token is in use
-- `_filter_valid_ips` now records empty/placeholder values (`""`, `"null"`, `"undefined"`, `"0.0.0.0"`, `"::"`) and duplicates as explicit `SkippedIP` entries with readable reasons, so `MapResult.mapped_ip_count + skipped_count` matches the input length
-- Per-IP `ctx.warning()` emissions during input filtering are capped at 100 with an aggregated summary line after the cap; a 500K batch with all entries filtered no longer floods logs or risks tripping the 60s tool-level timeout
+- `ipinfo_generate_map_url` now sources the IPInfo token from the handler
+  captured at startup (`handler.access_token`) instead of re-reading
+  `IPINFO_API_TOKEN` on every call; a runtime env mutation can no longer
+  cause the lookup and map paths to disagree on which token is in use.
+- `_filter_valid_ips` now records empty/placeholder values (`""`,
+  `"null"`, `"undefined"`, `"0.0.0.0"`, `"::"`) and duplicates as explicit
+  `SkippedIP` entries with readable reasons; `MapResult.mapped_ip_count +
+  skipped_count` now matches the input length.
 
 ## [0.4.0] - 2026-04-11
 
@@ -114,7 +165,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Response caching with 1-hour TTL
 - Pydantic models for API responses
 
-[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.1.1...v0.2.0

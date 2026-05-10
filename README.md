@@ -4,18 +4,16 @@
 [![CI](https://github.com/briandconnelly/mcp-server-ipinfo/actions/workflows/checks.yml/badge.svg)](https://github.com/briandconnelly/mcp-server-ipinfo/actions/workflows/checks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This is a simple [Model Context Protocol](https://modelcontextprotocol.io) server that uses the [ipinfo.io](https://ipinfo.io) API to get detailed information about an IP address.
-This can be used to determine where the user is located (approximately) and what network they are using.
+A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the [ipinfo.io](https://ipinfo.io) API to AI agents. Geolocate IPv4 and IPv6 addresses, identify ISPs and ASNs, detect VPN/proxy/Tor exit nodes, and generate interactive maps for sets of IPs.
 
 ![Example conversation using mcp-server-ipinfo](demo.png)
 
 
 ## Installation
 
-You'll need to create a token to use the IPInfo API.
-If you don't already have one, you can sign up for a free account at https://ipinfo.io/signup.
+Sign up for a free IPInfo API token at <https://ipinfo.io/signup> if you don't have one. The server runs with no token (free Lite tier — country and ASN basics) but most fields require a token.
 
-While each client has its own way of specifying, you'll generally use the following values:
+Most MCP clients accept the following values:
 
 | Field | Value |
 |-------|-------|
@@ -23,12 +21,9 @@ While each client has its own way of specifying, you'll generally use the follow
 | **Arguments** | `mcp-server-ipinfo` |
 | **Environment** | `IPINFO_API_TOKEN` = `<YOUR TOKEN>` |
 
-
 ### Development Version
 
-If you'd like to use the latest and greatest, the server can be pulled straight from GitHub.
-Just add an additional `--from` argument:
-
+To run the latest from `main`:
 
 | Field | Value |
 |-------|-------|
@@ -37,24 +32,30 @@ Just add an additional `--from` argument:
 | **Environment** | `IPINFO_API_TOKEN` = `<YOUR TOKEN>` |
 
 
-## Components
+## Tools
 
-### Tools
+- **`ipinfo_lookup_my_ip()`** — Geolocate the calling client's own IP. Takes no arguments. On stdio transports the result reflects this server's outbound IP, not the end user's.
+- **`ipinfo_lookup_ips(ips, detail="full")`** — Geolocate one or more specified IPs. `detail="summary"` strips heavy nested blocks (continent, flags, currency, abuse, domains) for batch token savings while preserving shape parity. Capped at 500,000 IPs per call. Invalid or special-use addresses (private, loopback, etc.) are filtered with structured per-IP reasons.
+- **`ipinfo_check_residential_proxy(ip)`** — Check whether an IP is a known residential-proxy exit node. Tagged `enterprise` — requires the IPInfo residential-proxy add-on.
+- **`ipinfo_generate_map_url(ips)`** — Build an interactive ipinfo.io map for a set of IPs. Returns a `MapResult` with the URL, the count that made the map, the IPs filtered out (with reasons, capped at 100), and a `truncated` flag.
 
-- `get_ip_details`: Get detailed information about one or more IP addresses including location, ISP, and network details.
-    - **Input:** `ips` (optional): List of IP addresses to analyze (IPv4 or IPv6). If not provided, analyzes the requesting client's IP address.
-    - **Output:** List of `IPDetails` containing location, organization, timezone, and more.
-    - **Note:** Batch lookups (multiple IPs) require `IPINFO_API_TOKEN`.
+### Plan tiers
 
-- `get_residential_proxy_info`: Check if an IP address is associated with a residential proxy service.
-    - **Input:** `ip`: The IP address to check for residential proxy usage.
-    - **Output:** `ResidentialProxyDetails` with proxy service name, last seen date, and activity percentage.
-    - **Note:** Requires `IPINFO_API_TOKEN` with residential proxy data access.
+| Tier | Fields available |
+|------|------------------|
+| Free Lite (no token) | country, country_code, continent, ASN basics |
+| Core | full geolocation, ASN details, privacy/VPN/proxy/Tor/hosting flags |
+| Plus | adds carrier and company data |
+| Enterprise | adds domains, abuse contacts, residential-proxy add-on |
 
-- `get_map_url`: Generate a URL to an interactive map visualization of IP addresses.
-    - **Input:** `ips`: List of IP addresses to visualize (max 500,000).
-    - **Output:** URL to an interactive map on ipinfo.io showing geographic locations.
-    - **Note:** Useful for visualizing geographic distribution of traffic or users.
+### Errors
+
+Every tool raises a `ToolError` whose message is a JSON-encoded envelope with a stable `code` (`invalid_ip_address`, `special_ip_unsupported`, `no_valid_ips`, `too_many_ips`, `auth_invalid`, `auth_insufficient_scope`, `quota_exceeded`, `timeout`, `api_error`, `unknown_error`), a `temporary` flag, optional `retry_after_ms`, and a `repair` hint. Agents should parse the message as JSON and branch on `code`.
+
+### Deprecated tools
+
+`get_ip_details`, `get_residential_proxy_info`, and `get_map_url` are forwarding aliases retained from 0.4.x. They are tagged `deprecated` and **will be removed in 0.6.0**. New code should call the `ipinfo_*` tools directly.
+
 
 ## Configuration
 
@@ -62,13 +63,14 @@ Just add an additional `--from` argument:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `IPINFO_API_TOKEN` | IPInfo API token for premium features | None (basic lookups only) |
-| `IPINFO_CACHE_TTL` | Cache TTL in seconds | 3600 (1 hour) |
+| `IPINFO_API_TOKEN` | IPInfo API token. Without it the server runs in free Lite mode. | unset (Lite) |
+| `IPINFO_CACHE_TTL` | Per-IP cache TTL in seconds. Cached results retain their original `ts_retrieved` timestamp. | `3600` |
+| `IPINFO_CACHE_SIZE` | Maximum cache entries before oldest-first eviction. | `4096` |
 
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file for details. See [CHANGELOG.md](CHANGELOG.md) for release history.
+MIT License — see [LICENSE](LICENSE). Release history in [CHANGELOG.md](CHANGELOG.md).
 
 ## Disclaimer
 
