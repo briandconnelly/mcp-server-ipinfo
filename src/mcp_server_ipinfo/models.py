@@ -1,8 +1,56 @@
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 from pydantic.networks import HttpUrl, IPvAnyAddress
+
+
+ToolErrorCode = Literal[
+    "invalid_ip_address",
+    "special_ip_unsupported",
+    "no_valid_ips",
+    "too_many_ips",
+    "auth_invalid",
+    "auth_insufficient_scope",
+    "quota_exceeded",
+    "timeout",
+    "api_error",
+    "unknown_error",
+]
+
+
+class ToolErrorEnvelope(BaseModel):
+    """Structured error envelope serialized into a ToolError message string.
+
+    The envelope gives agents stable symbolic codes, a repair hint, and
+    retry guidance instead of an opaque prose-only error. JSON-encoded into
+    a ``ToolError`` so that the wire-level ``isError: true`` still applies
+    while the message body remains parseable.
+    """
+
+    code: ToolErrorCode
+    """Stable symbolic identifier for branching on the error."""
+
+    message: str
+    """Human-readable summary; safe to surface to end users."""
+
+    temporary: bool
+    """True if the agent should retry after a delay; False if the call will keep failing."""
+
+    field: str | None = None
+    """Name of the offending input field, when applicable."""
+
+    value: Any = None
+    """Offending value (redact in repair hint if sensitive)."""
+
+    retry_after_ms: int | None = None
+    """Milliseconds the agent should wait before retrying, when temporary=True."""
+
+    repair: dict[str, Any] | None = None
+    """Free-form repair guidance: hint text, alternative tool, allowed values."""
+
+    request_id: str | None = None
+    """Correlation identifier for the originating request, if available."""
 
 
 class ASNDetails(BaseModel):

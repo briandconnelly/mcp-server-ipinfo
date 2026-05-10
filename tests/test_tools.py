@@ -224,25 +224,7 @@ class TestGetIPDetails:
         assert len(results) == 1
         assert str(results[0].ip) == "8.8.8.8"
 
-    async def test_api_failure(self, mock_context_with_state):
-        """Test that API failures raise ToolError."""
-        with patch(
-            "mcp_server_ipinfo.server.ipinfo_lookup",
-            side_effect=Exception("API error"),
-        ):
-            with pytest.raises(ToolError, match="Lookup failed"):
-                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
-
-    async def test_batch_api_failure(self, mock_context_with_state):
-        """Test that batch API failures raise ToolError."""
-        with patch(
-            "mcp_server_ipinfo.server.ipinfo_batch_lookup",
-            side_effect=Exception("Batch API error"),
-        ):
-            with pytest.raises(ToolError, match="Lookup failed"):
-                await get_ip_details(
-                    ips=["8.8.8.8", "1.1.1.1"], ctx=mock_context_with_state
-                )
+    # Upstream-error → structured envelope coverage lives in test_error_dispatch.py.
 
 
 class TestGetResidentialProxyInfo:
@@ -351,14 +333,7 @@ class TestGetMapUrl:
             sent_ips = call_args.kwargs.get("json") or call_args[1].get("json")
             assert sent_ips == ["8.8.8.8"]
 
-    async def test_api_error_handling(self, mock_context_with_state):
-        """Test handling of API errors."""
-        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
-            mock_post = AsyncMock(side_effect=Exception("API error"))
-            mock_client.return_value.__aenter__.return_value.post = mock_post
-
-            with pytest.raises(ToolError, match="Map generation failed"):
-                await get_map_url(ips=["8.8.8.8"], ctx=mock_context_with_state)
+    # API-error → structured envelope coverage lives in test_error_dispatch.py.
 
     async def test_too_many_ips_error(self, mock_context_with_state):
         """Test error when too many IPs are provided."""

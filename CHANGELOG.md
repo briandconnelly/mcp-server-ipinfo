@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ipinfo_lookup_my_ip` tool for looking up the calling client's own IP (no arguments)
+- `ipinfo_lookup_ips` tool for looking up one or more specified IPs, with a `detail: "summary" | "full"` toggle that nulls heavy nested blocks (`continent`, `country_flag*`, `country_currency`, `abuse`, `domains`) for batch token savings while preserving shape parity
+- `ipinfo_check_residential_proxy` and `ipinfo_generate_map_url` (renamed from the originals)
+- `ToolErrorEnvelope` Pydantic model with stable symbolic codes (`invalid_ip_address`, `special_ip_unsupported`, `no_valid_ips`, `too_many_ips`, `auth_invalid`, `auth_insufficient_scope`, `quota_exceeded`, `timeout`, `api_error`, `unknown_error`); JSON-encoded into every `ToolError` so agents can branch on `code` without parsing prose
+- Per-tool metadata: `meta={"introduced_in": "0.5.0"}` on all new tools; `tags={"enterprise"}` and `meta={"plan_required": "residential_proxy_addon"}` on `ipinfo_check_residential_proxy`
+- Schema-level `maxItems: 500_000` constraint on `ips` arrays so MCP clients can reject oversized inputs without a round-trip
+
+### Changed
+- Tool errors now distinguish missing/invalid token (`auth_invalid`) from insufficient plan scope (`auth_insufficient_scope`) instead of collapsing to one opaque message
+- Quota and timeout failures map to `quota_exceeded` / `timeout` codes with `temporary: true` so agents know to retry
+- Server `instructions` document the structured error contract and list both current and deprecated tool names
+
+### Deprecated
+- `get_ip_details`, `get_residential_proxy_info`, `get_map_url` retained as forwarding aliases tagged `deprecated` with `meta.replaced_by`; **scheduled for removal in 0.6.0**
+
 ## [0.4.0] - 2026-04-11
 
 ### Added
