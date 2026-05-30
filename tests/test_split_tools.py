@@ -2,7 +2,7 @@
 
 `get_ip_details` is split into:
 - `ipinfo_lookup_my_ip()` — no args; the calling client's IP.
-- `ipinfo_lookup_ips(ips, detail="full")` — list lookup with optional null-stripping.
+- `ipinfo_lookup_ips(ips, detail="summary")` — list lookup; summary omits heavy blocks.
 
 The original `get_ip_details` is retained as a deprecated alias.
 """
@@ -37,21 +37,34 @@ class TestIpinfoLookupMyIp:
 class TestIpinfoLookupIps:
     """ipinfo_lookup_ips returns a list and supports a `detail` toggle."""
 
-    async def test_full_detail_default(self, mock_context_with_state):
+    async def test_full_detail_returns_models(self, mock_context_with_state):
         from mcp_server_ipinfo.server import ipinfo_lookup_ips
 
-        results = await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=["8.8.8.8"], detail="full", ctx=mock_context_with_state
+        )
         assert len(results) == 1
         assert isinstance(results[0], IPDetails)
         assert results[0].city == "Mountain View"
 
-    async def test_summary_detail_drops_heavy_blocks(
+    async def test_summary_is_the_default(self, mock_context_with_state):
+        """detail defaults to "summary" (token-lean projected dicts)."""
+        from mcp_server_ipinfo.server import ipinfo_lookup_ips
+
+        results = await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
+        assert len(results) == 1
+        # Default summary yields projected dicts, not IPDetails models.
+        assert isinstance(results[0], dict)
+        assert results[0]["city"] == "Mountain View"
+        assert "continent" not in results[0]
+
+    async def test_summary_detail_omits_heavy_blocks(
         self, mock_context_with_state, sample_ip_details
     ):
-        """Summary mode nulls out the heavy nested blocks for token savings.
+        """Summary mode OMITS the heavy nested blocks entirely for token savings.
 
-        The agent opts in by passing detail="summary"; shape parity is
-        preserved (still IPDetails) so existing parsers don't break.
+        The blocks are absent from the projected dict (not merely nulled), while
+        full mode keeps the IPDetails model with every field present.
         """
         from mcp_server_ipinfo.server import ipinfo_lookup_ips
 
@@ -74,17 +87,22 @@ class TestIpinfoLookupIps:
             ips=["8.8.8.8"], detail="summary", ctx=mock_context_with_state
         )
 
-        # Full mode preserves the heavy blocks.
+        # Full mode (IPDetails model) preserves the heavy blocks.
         assert full[0].continent is not None
         assert full[0].country_flag is not None
-        # Summary mode nulls them out.
-        assert summary[0].continent is None
-        assert summary[0].country_flag is None
-        assert summary[0].country_flag_url is None
-        assert summary[0].country_currency is None
+        # Summary mode (projected dict) omits the heavy keys entirely.
+        for heavy in (
+            "continent",
+            "country_flag",
+            "country_flag_url",
+            "country_currency",
+            "abuse",
+            "domains",
+        ):
+            assert heavy not in summary[0], f"{heavy} should be omitted in summary"
         # Core geolocation fields survive.
-        assert summary[0].city == "Mountain View"
-        assert summary[0].country == "US"
+        assert summary[0]["city"] == "Mountain View"
+        assert summary[0]["country"] == "US"
 
 
 class TestRenamedTools:

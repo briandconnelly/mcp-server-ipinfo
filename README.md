@@ -33,7 +33,7 @@ To run the latest from `main`:
 ## Tools
 
 - **`ipinfo_lookup_my_ip()`** — Geolocate the calling client's own IP. Takes no arguments. On stdio transports the result reflects this server's outbound IP, not the end user's.
-- **`ipinfo_lookup_ips(ips, detail="full")`** — Geolocate one or more specified IPs. `detail="summary"` strips heavy nested blocks (continent, flags, currency, abuse, domains) for batch token savings while preserving shape parity. Capped at 500,000 IPs per call. Invalid or special-use addresses (private, loopback, etc.) are filtered with `ctx.warning()` and excluded from the result list — match returned `IPDetails.ip` values back to your input to detect what was dropped.
+- **`ipinfo_lookup_ips(ips, detail="summary")`** — Geolocate one or more specified IPs. Defaults to `detail="summary"`, which **omits** heavy nested blocks (continent, flags, currency, abuse, domains) for batch token savings; pass `detail="full"` for every field. Capped at 500,000 IPs per call. Invalid or special-use addresses (private, loopback, etc.) are filtered with `ctx.warning()` and excluded from the result list, as are IPs that fail upstream — match returned `IPDetails.ip` values back to your input to detect what was dropped. If every attempted lookup fails, a temporary `api_error` is raised.
 - **`ipinfo_check_residential_proxy(ip)`** — Check whether an IP is a known residential-proxy exit node. Tagged `enterprise` — requires the IPInfo residential-proxy add-on.
 - **`ipinfo_generate_map_url(ips)`** — Build an interactive ipinfo.io map for a set of IPs. Returns a `MapResult` with the URL, the count that made the map, the IPs filtered out (with reasons, capped at 100), and a `truncated` flag.
 
@@ -49,7 +49,7 @@ To run the latest from `main`:
 
 ### Errors
 
-Every tool raises a `ToolError` whose message is a JSON-encoded envelope with a stable `code` (`invalid_ip_address`, `special_ip_unsupported`, `no_valid_ips`, `too_many_ips`, `auth_invalid`, `auth_insufficient_scope`, `quota_exceeded`, `timeout`, `api_error`, `unknown_error`), a `temporary` flag, optional `retry_after_ms`, and a `repair` hint. Agents should parse the message as JSON and branch on `code`.
+Every tool raises a `ToolError` whose message is a JSON-encoded envelope with a stable `code` (`invalid_ip_address`, `special_ip_unsupported`, `no_valid_ips`, `too_many_ips`, `auth_invalid`, `auth_insufficient_scope`, `quota_exceeded`, `timeout`, `api_error`, `unknown_error`), a `temporary` flag, optional `retry_after_ms`, a `repair` hint, and a `request_id` correlation id. Agents should parse the message as JSON and branch on `code`. Each tool also advertises the subset of codes it can raise via `meta.error_codes`, so you can see the branch set from tool introspection.
 
 ### Deprecated tools
 
