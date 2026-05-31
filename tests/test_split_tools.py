@@ -1,14 +1,11 @@
-"""Tests for the split tools introduced in 0.5.0.
+"""Tests for the split lookup tools introduced in 0.5.0.
 
-`get_ip_details` is split into:
+The original single `get_ip_details` tool was split into:
 - `ipinfo_lookup_my_ip()` — no args; the calling client's IP.
 - `ipinfo_lookup_ips(ips, detail="summary")` — list lookup; summary omits heavy blocks.
 
-The original `get_ip_details` is retained as a deprecated alias.
+The legacy alias was removed in 0.6.0.
 """
-
-import pytest
-from fastmcp.exceptions import ToolError
 
 from mcp_server_ipinfo.models import IPDetails
 
@@ -139,33 +136,3 @@ class TestRenamedTools:
         assert isinstance(result, MapResult)
         assert str(result.url) == "https://ipinfo.io/map/demo/xyz"
         assert result.mapped_ip_count == 2
-
-
-class TestDeprecatedGetIpDetails:
-    """The original get_ip_details remains as a deprecated alias."""
-
-    async def test_alias_still_callable(self, mock_context_with_state):
-        from mcp_server_ipinfo.server import get_ip_details
-
-        results = await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
-        assert len(results) == 1
-        assert str(results[0].ip) == "8.8.8.8"
-
-    async def test_alias_my_ip_mode(self, mock_context_with_state):
-        """get_ip_details(ips=None) preserves the legacy self-IP shortcut."""
-        from mcp_server_ipinfo.server import get_ip_details
-
-        results = await get_ip_details(ips=None, ctx=mock_context_with_state)
-        assert len(results) == 1
-        assert str(results[0].ip) == "203.0.113.1"
-
-    async def test_no_valid_ips_envelope(self, mock_context_with_state):
-        """The deprecated alias still emits structured envelopes on validation failures."""
-        import json
-
-        from mcp_server_ipinfo.server import get_ip_details
-
-        with pytest.raises(ToolError) as excinfo:
-            await get_ip_details(ips=["192.168.1.1"], ctx=mock_context_with_state)
-        env = json.loads(str(excinfo.value))
-        assert env["code"] == "no_valid_ips"

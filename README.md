@@ -52,11 +52,6 @@ To run the latest from `main`:
 
 Every tool raises a `ToolError` whose message is a JSON-encoded envelope with a stable `code` (`invalid_ip_address`, `special_ip_unsupported`, `no_valid_ips`, `too_many_ips`, `auth_invalid`, `auth_insufficient_scope`, `quota_exceeded`, `timeout`, `api_error`, `unknown_error`), a `temporary` flag, optional `retry_after_ms`, a `repair` hint, and a `request_id` correlation id. Agents should parse the message as JSON and branch on `code`. Each tool also advertises the subset of codes it can raise via `meta.error_codes`, so you can see the branch set from tool introspection.
 
-### Deprecated tools
-
-`get_ip_details`, `get_residential_proxy_info`, and `get_map_url` are forwarding aliases retained from 0.4.x. They are tagged `deprecated` and **will be removed in 0.6.0**. New code should call the `ipinfo_*` tools directly.
-
-
 ## Configuration
 
 ### Environment Variables

@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-31
+
 This cycle hardens the agent-facing contract from a joint Claude + Codex
-audit. The headline fix is a correctness bug (B0): multi-IP lookups silently
+audit and completes the 0.5.0 deprecation cycle by removing the legacy tool
+aliases. The headline fix is a correctness bug (B0): multi-IP lookups silently
 returned nothing on a cold cache.
 
 ### Fixed
@@ -67,6 +70,14 @@ returned nothing on a cold cache.
   shape-parity guarantee is dropped; callers using `record.get("continent")`
   are unaffected, callers using `record["continent"]` should switch to `.get`.
   The tool's output schema is unchanged (those fields remain optional).
+
+### Removed
+- **Breaking:** the deprecated forwarding aliases `get_ip_details`,
+  `get_residential_proxy_info`, and `get_map_url` (deprecated in 0.5.0) are
+  removed as scheduled. Call `ipinfo_lookup_my_ip` / `ipinfo_lookup_ips`,
+  `ipinfo_check_residential_proxy`, and `ipinfo_generate_map_url` respectively.
+  Note that `get_map_url` returned a bare URL string; `ipinfo_generate_map_url`
+  returns a structured `MapResult`.
 
 ## [0.5.0] - 2026-05-10
 
@@ -226,7 +237,8 @@ The previous tool names remain as forwarding aliases scheduled for removal in
 - Response caching with 1-hour TTL
 - Pydantic models for API responses
 
-[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.2.0...v0.3.0

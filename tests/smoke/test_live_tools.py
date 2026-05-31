@@ -187,18 +187,6 @@ async def test_generate_map_url_sentinel_and_dupe_accounting(client):
     assert "private" in skipped_reasons.get("192.168.1.1", "").lower()
 
 
-async def test_deprecated_get_map_url_alias_still_works(client):
-    """Forwarding alias preserves the bare-string return for 0.4.x parity."""
-    try:
-        r = await client.call_tool("get_map_url", arguments={"ips": ["8.8.8.8"]})
-    except ToolError as e:
-        _skip_if_transient(e)
-    # Bare-string return — FastMCP wraps non-object roots in {"result": "<url>"}.
-    url = r.structured_content["result"]
-    assert isinstance(url, str)
-    assert url.startswith("https://ipinfo.io/")
-
-
 async def test_structured_error_envelope_on_invalid_input(client):
     """No live API call — pure boundary rejection. Verifies envelope shape."""
     with pytest.raises(ToolError) as excinfo:

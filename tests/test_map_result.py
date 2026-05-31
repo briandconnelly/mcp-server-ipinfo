@@ -2,8 +2,6 @@
 
 `ipinfo_generate_map_url` now returns a typed MapResult with the URL, the
 count that made the map, the list of IPs filtered out, and a truncated flag.
-The deprecated `get_map_url` alias keeps the bare `str` return shape for
-0.4.x cached-client parity.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -201,24 +199,6 @@ class TestIpinfoGenerateMapUrlReturnsStructured:
         assert result.skipped_count == 150
         assert len(result.skipped_ips) == 100
         assert result.truncated is True
-
-
-class TestDeprecatedGetMapUrlPreservesStringReturn:
-    """The deprecated get_map_url alias keeps the 0.4.x bare-URL return shape."""
-
-    async def test_alias_returns_string(
-        self, mock_context_with_state, mock_httpx_response
-    ):
-        from mcp_server_ipinfo.server import get_map_url
-
-        with patch("mcp_server_ipinfo.ipinfo.httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                return_value=mock_httpx_response
-            )
-            url = await get_map_url(ips=["8.8.8.8"], ctx=mock_context_with_state)
-
-        assert isinstance(url, str)
-        assert url == "https://ipinfo.io/map/demo/abc123"
 
 
 class TestHttpxErrorClassification:

@@ -8,9 +8,9 @@ from fastmcp.exceptions import ToolError
 from mcp_server_ipinfo.server import (
     _normalize_ip,
     _validate_ip,
-    get_ip_details,
-    get_map_url,
-    get_residential_proxy_info,
+    ipinfo_check_residential_proxy,
+    ipinfo_generate_map_url,
+    ipinfo_lookup_ips,
 )
 
 
@@ -105,12 +105,14 @@ class TestNormalizeIP:
         assert _normalize_ip(input_ip) == expected
 
 
-class TestGetIPDetails:
-    """Tests for get_ip_details tool."""
+class TestLookupIps:
+    """Tests for ipinfo_lookup_ips tool (detail="full" to assert on model fields)."""
 
     async def test_lookup_single_ip(self, mock_context_with_state):
         """Test looking up a single IP."""
-        results = await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=["8.8.8.8"], detail="full", ctx=mock_context_with_state
+        )
 
         assert len(results) == 1
         assert str(results[0].ip) == "8.8.8.8"
@@ -119,26 +121,22 @@ class TestGetIPDetails:
     async def test_lookup_multiple_ips(self, mock_context_with_state):
         """Test looking up multiple IPs."""
         ips = ["8.8.8.8", "1.1.1.1"]
-        results = await get_ip_details(ips=ips, ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=ips, detail="full", ctx=mock_context_with_state
+        )
 
         assert len(results) == 2
         result_ips = {str(r.ip) for r in results}
         assert result_ips == {"8.8.8.8", "1.1.1.1"}
-
-    async def test_lookup_client_ip(self, mock_context_with_state):
-        """Test looking up client's own IP (None)."""
-        results = await get_ip_details(ips=None, ctx=mock_context_with_state)
-
-        assert len(results) == 1
-        # Mock returns 203.0.113.1 for None
-        assert str(results[0].ip) == "203.0.113.1"
 
     async def test_cache_hit(self, mock_context_with_state, sample_ip_details):
         """Test that cached results are returned."""
         cache = mock_context_with_state.lifespan_context["cache"]
         await cache.set("8.8.8.8", sample_ip_details)
 
-        results = await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=["8.8.8.8"], detail="full", ctx=mock_context_with_state
+        )
 
         assert len(results) == 1
         assert results[0] is sample_ip_details
@@ -146,17 +144,23 @@ class TestGetIPDetails:
     async def test_invalid_ip(self, mock_context_with_state):
         """Test that all invalid IPs raise ToolError."""
         with pytest.raises(ToolError, match="No valid IP addresses"):
-            await get_ip_details(ips=["not-an-ip"], ctx=mock_context_with_state)
+            await ipinfo_lookup_ips(
+                ips=["not-an-ip"], detail="full", ctx=mock_context_with_state
+            )
 
     async def test_private_ip(self, mock_context_with_state):
         """Test that all private IPs raise ToolError."""
         with pytest.raises(ToolError, match="No valid IP addresses"):
-            await get_ip_details(ips=["192.168.1.1"], ctx=mock_context_with_state)
+            await ipinfo_lookup_ips(
+                ips=["192.168.1.1"], detail="full", ctx=mock_context_with_state
+            )
 
     async def test_mixed_valid_invalid_ips(self, mock_context_with_state):
         """Test batch skips invalid IPs with warnings."""
         ips = ["8.8.8.8", "192.168.1.1", "1.1.1.1"]
-        results = await get_ip_details(ips=ips, ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=ips, detail="full", ctx=mock_context_with_state
+        )
 
         # Only public IPs should be returned
         assert len(results) == 2
@@ -171,7 +175,7 @@ class TestGetIPDetails:
         ips = ["192.168.1.1", "10.0.0.1", "127.0.0.1"]
 
         with pytest.raises(ToolError, match="No valid IP addresses"):
-            await get_ip_details(ips=ips, ctx=mock_context_with_state)
+            await ipinfo_lookup_ips(ips=ips, detail="full", ctx=mock_context_with_state)
 
     async def test_with_cache(self, mock_context_with_state, sample_ip_details):
         """Test uses cache for known IPs."""
@@ -179,7 +183,9 @@ class TestGetIPDetails:
         await cache.set("8.8.8.8", sample_ip_details)
 
         ips = ["8.8.8.8", "1.1.1.1"]
-        results = await get_ip_details(ips=ips, ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=ips, detail="full", ctx=mock_context_with_state
+        )
 
         assert len(results) == 2
         # 8.8.8.8 should be the cached version
@@ -189,7 +195,9 @@ class TestGetIPDetails:
     async def test_preserves_order(self, mock_context_with_state):
         """Test that results preserve input order where possible."""
         ips = ["8.8.8.8", "1.1.1.1", "208.67.222.222"]
-        results = await get_ip_details(ips=ips, ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=ips, detail="full", ctx=mock_context_with_state
+        )
 
         result_ips = [str(r.ip) for r in results]
         assert result_ips == ips
@@ -197,8 +205,8 @@ class TestGetIPDetails:
     async def test_normalized_inputs(self, mock_context_with_state):
         """Test that placeholder values are filtered out."""
         # Only the valid IP should be looked up
-        results = await get_ip_details(
-            ips=["8.8.8.8", "", "null"], ctx=mock_context_with_state
+        results = await ipinfo_lookup_ips(
+            ips=["8.8.8.8", "", "null"], detail="full", ctx=mock_context_with_state
         )
         assert len(results) == 1
         assert str(results[0].ip) == "8.8.8.8"
@@ -206,33 +214,39 @@ class TestGetIPDetails:
     async def test_empty_list_after_normalization(self, mock_context_with_state):
         """Test error when all IPs normalize to None."""
         with pytest.raises(ToolError, match="No valid IP addresses"):
-            await get_ip_details(
-                ips=["", "null", "undefined"], ctx=mock_context_with_state
+            await ipinfo_lookup_ips(
+                ips=["", "null", "undefined"],
+                detail="full",
+                ctx=mock_context_with_state,
             )
 
     async def test_duplicate_ips_deduplicated(self, mock_context_with_state):
         """Test that duplicate IPs are deduplicated."""
-        results = await get_ip_details(
-            ips=["8.8.8.8", "8.8.8.8", "8.8.8.8"], ctx=mock_context_with_state
+        results = await ipinfo_lookup_ips(
+            ips=["8.8.8.8", "8.8.8.8", "8.8.8.8"],
+            detail="full",
+            ctx=mock_context_with_state,
         )
         assert len(results) == 1
         assert str(results[0].ip) == "8.8.8.8"
 
     async def test_whitespace_stripped(self, mock_context_with_state):
         """Test that whitespace around IPs is stripped."""
-        results = await get_ip_details(ips=[" 8.8.8.8 "], ctx=mock_context_with_state)
+        results = await ipinfo_lookup_ips(
+            ips=[" 8.8.8.8 "], detail="full", ctx=mock_context_with_state
+        )
         assert len(results) == 1
         assert str(results[0].ip) == "8.8.8.8"
 
     # Upstream-error → structured envelope coverage lives in test_error_dispatch.py.
 
 
-class TestGetResidentialProxyInfo:
-    """Tests for get_residential_proxy_info tool."""
+class TestCheckResidentialProxy:
+    """Tests for ipinfo_check_residential_proxy tool."""
 
     async def test_lookup(self, mock_context_with_state):
         """Test residential proxy lookup."""
-        result = await get_residential_proxy_info(
+        result = await ipinfo_check_residential_proxy(
             ip="142.250.80.46", ctx=mock_context_with_state
         )
 
@@ -244,20 +258,20 @@ class TestGetResidentialProxyInfo:
     async def test_invalid_ip(self, mock_context_with_state):
         """Test that invalid IPs raise ToolError."""
         with pytest.raises(ToolError, match="not a valid IP address"):
-            await get_residential_proxy_info(
+            await ipinfo_check_residential_proxy(
                 ip="not-an-ip", ctx=mock_context_with_state
             )
 
     async def test_private_ip(self, mock_context_with_state):
         """Test that private IPs raise ToolError."""
         with pytest.raises(ToolError, match="private IP address"):
-            await get_residential_proxy_info(
+            await ipinfo_check_residential_proxy(
                 ip="192.168.1.1", ctx=mock_context_with_state
             )
 
 
-class TestGetMapUrl:
-    """Tests for get_map_url tool."""
+class TestGenerateMapUrl:
+    """Tests for ipinfo_generate_map_url tool."""
 
     @pytest.fixture
     def mock_httpx_response(self):
@@ -278,11 +292,11 @@ class TestGetMapUrl:
                 return_value=mock_httpx_response
             )
 
-            url = await get_map_url(
+            result = await ipinfo_generate_map_url(
                 ips=["8.8.8.8", "1.1.1.1"], ctx=mock_context_with_state
             )
 
-            assert url == "https://ipinfo.io/map/demo/abc123"
+            assert str(result.url) == "https://ipinfo.io/map/demo/abc123"
             mock_context_with_state.info.assert_called()
 
     async def test_filters_invalid_ips(
@@ -293,12 +307,12 @@ class TestGetMapUrl:
             mock_post = AsyncMock(return_value=mock_httpx_response)
             mock_client.return_value.__aenter__.return_value.post = mock_post
 
-            url = await get_map_url(
+            result = await ipinfo_generate_map_url(
                 ips=["8.8.8.8", "192.168.1.1", "1.1.1.1"],
                 ctx=mock_context_with_state,
             )
 
-            assert url == "https://ipinfo.io/map/demo/abc123"
+            assert str(result.url) == "https://ipinfo.io/map/demo/abc123"
             # Check that only valid IPs were sent
             call_args = mock_post.call_args
             sent_ips = call_args.kwargs.get("json") or call_args[1].get("json")
@@ -311,7 +325,7 @@ class TestGetMapUrl:
     async def test_all_invalid_ips_error(self, mock_context_with_state):
         """Test error when all IPs are invalid."""
         with pytest.raises(ToolError, match="No valid IP addresses"):
-            await get_map_url(
+            await ipinfo_generate_map_url(
                 ips=["192.168.1.1", "10.0.0.1"], ctx=mock_context_with_state
             )
 
@@ -323,12 +337,12 @@ class TestGetMapUrl:
             mock_post = AsyncMock(return_value=mock_httpx_response)
             mock_client.return_value.__aenter__.return_value.post = mock_post
 
-            url = await get_map_url(
+            result = await ipinfo_generate_map_url(
                 ips=["8.8.8.8", "", "null", "undefined"],
                 ctx=mock_context_with_state,
             )
 
-            assert url == "https://ipinfo.io/map/demo/abc123"
+            assert str(result.url) == "https://ipinfo.io/map/demo/abc123"
             call_args = mock_post.call_args
             sent_ips = call_args.kwargs.get("json") or call_args[1].get("json")
             assert sent_ips == ["8.8.8.8"]
@@ -343,4 +357,4 @@ class TestGetMapUrl:
         """
         ips = ["1.1.1.1"] * 500_001
         with pytest.raises(ToolError, match="Too many IPs"):
-            await get_map_url(ips=ips, ctx=mock_context_with_state)
+            await ipinfo_generate_map_url(ips=ips, ctx=mock_context_with_state)
