@@ -13,9 +13,9 @@ from ipinfo.error import APIError
 from ipinfo.exceptions import RequestQuotaExceededError, TimeoutExceededError
 
 from mcp_server_ipinfo.server import (
-    get_ip_details,
-    get_map_url,
-    get_residential_proxy_info,
+    ipinfo_check_residential_proxy,
+    ipinfo_generate_map_url,
+    ipinfo_lookup_ips,
 )
 
 
@@ -29,7 +29,7 @@ class TestValidationErrorCodes:
 
     async def test_invalid_ip_format(self, mock_context_with_state):
         with pytest.raises(ToolError) as excinfo:
-            await get_residential_proxy_info(
+            await ipinfo_check_residential_proxy(
                 ip="not-an-ip", ctx=mock_context_with_state
             )
         env = parse_envelope(excinfo)
@@ -40,7 +40,7 @@ class TestValidationErrorCodes:
 
     async def test_private_ip_code(self, mock_context_with_state):
         with pytest.raises(ToolError) as excinfo:
-            await get_residential_proxy_info(
+            await ipinfo_check_residential_proxy(
                 ip="192.168.1.1", ctx=mock_context_with_state
             )
         env = parse_envelope(excinfo)
@@ -52,7 +52,7 @@ class TestValidationErrorCodes:
 
     async def test_no_valid_ips_code(self, mock_context_with_state):
         with pytest.raises(ToolError) as excinfo:
-            await get_ip_details(
+            await ipinfo_lookup_ips(
                 ips=["192.168.1.1", "10.0.0.1"], ctx=mock_context_with_state
             )
         env = parse_envelope(excinfo)
@@ -66,7 +66,7 @@ class TestValidationErrorCodes:
         # the same branch with O(1) memory per element instead of O(N).
         ips = ["1.1.1.1"] * 500_001
         with pytest.raises(ToolError) as excinfo:
-            await get_map_url(ips=ips, ctx=mock_context_with_state)
+            await ipinfo_generate_map_url(ips=ips, ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "too_many_ips"
         assert env["temporary"] is False
@@ -78,21 +78,10 @@ class TestValidationErrorCodes:
         Schema enforces the cap at the FastMCP boundary, but direct Python
         invocation skips that path; the inner _do_batch_lookup guard catches it.
         """
-        from mcp_server_ipinfo.server import ipinfo_lookup_ips
 
         ips = ["1.1.1.1"] * 500_001
         with pytest.raises(ToolError) as excinfo:
             await ipinfo_lookup_ips(ips=ips, ctx=mock_context_with_state)
-        env = parse_envelope(excinfo)
-        assert env["code"] == "too_many_ips"
-
-    async def test_deprecated_get_ip_details_inherits_cap(
-        self, mock_context_with_state
-    ):
-        """The deprecated alias forwards to _do_batch_lookup so it inherits the cap."""
-        ips = ["1.1.1.1"] * 500_001
-        with pytest.raises(ToolError) as excinfo:
-            await get_ip_details(ips=ips, ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "too_many_ips"
 
@@ -107,7 +96,7 @@ class TestUpstreamErrorCodes:
             side_effect=APIError(401, {"error": {"message": "Wrong token"}}),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+                await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "auth_invalid"
         assert env["temporary"] is False
@@ -121,7 +110,7 @@ class TestUpstreamErrorCodes:
             side_effect=APIError(403, {"error": {"message": "Plan required"}}),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_residential_proxy_info(
+                await ipinfo_check_residential_proxy(
                     ip="142.250.80.46", ctx=mock_context_with_state
                 )
         env = parse_envelope(excinfo)
@@ -134,7 +123,7 @@ class TestUpstreamErrorCodes:
             side_effect=APIError(500, {"error": {"message": "boom"}}),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+                await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "api_error"
         assert env["temporary"] is True
@@ -145,7 +134,7 @@ class TestUpstreamErrorCodes:
             side_effect=RequestQuotaExceededError(),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+                await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "quota_exceeded"
         assert env["temporary"] is True
@@ -156,7 +145,7 @@ class TestUpstreamErrorCodes:
             side_effect=TimeoutExceededError(),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+                await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "timeout"
         assert env["temporary"] is True
@@ -168,7 +157,7 @@ class TestUpstreamErrorCodes:
             side_effect=RuntimeError("???"),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+                await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "unknown_error"
         assert env["temporary"] is True
@@ -180,7 +169,7 @@ class TestUpstreamErrorCodes:
             side_effect=RequestQuotaExceededError(),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_ip_details(
+                await ipinfo_lookup_ips(
                     ips=["8.8.8.8", "1.1.1.1"], ctx=mock_context_with_state
                 )
         env = parse_envelope(excinfo)
@@ -194,7 +183,7 @@ class TestUpstreamErrorCodes:
             side_effect=APIError(404, {"error": {"message": "missing"}}),
         ):
             with pytest.raises(ToolError) as excinfo:
-                await get_ip_details(ips=["8.8.8.8"], ctx=mock_context_with_state)
+                await ipinfo_lookup_ips(ips=["8.8.8.8"], ctx=mock_context_with_state)
         env = parse_envelope(excinfo)
         assert env["code"] == "api_error"
         assert env["temporary"] is False
@@ -219,7 +208,9 @@ class TestUpstreamErrorCodes:
                 side_effect=RuntimeError("network down")
             )
             with pytest.raises(ToolError) as excinfo:
-                await get_map_url(ips=["8.8.8.8"], ctx=mock_context_with_state)
+                await ipinfo_generate_map_url(
+                    ips=["8.8.8.8"], ctx=mock_context_with_state
+                )
         env = parse_envelope(excinfo)
         # Map errors come from httpx, not the ipinfo library — they land in
         # the generic api_error/unknown bucket but must still be structured.

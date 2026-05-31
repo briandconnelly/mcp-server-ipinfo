@@ -7,21 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-This cycle hardens the agent-facing contract from a joint Claude + Codex
-audit. The headline fix is a correctness bug (B0): multi-IP lookups silently
-returned nothing on a cold cache.
+## [0.6.0] - 2026-05-31
 
-### Fixed
-- **Batch lookups silently dropped every freshly-fetched IP.** The ipinfo SDK
-  returns fresh batch entries as raw `dict`s (only cache/bogon hits are
-  `Details` objects), but `ipinfo_batch_lookup` kept entries only
-  `if hasattr(details, "all")` — so `ipinfo_lookup_ips` with 2+ uncached IPs
-  returned `[]`. The parser now accepts both shapes. (Single-IP lookups were
-  unaffected; the unit mock returned `Details` objects, masking it — the mock
-  now mirrors the real raw-dict shape, and a live multi-IP smoke test guards
-  the integration path.)
-- `ToolErrorEnvelope.request_id` is now populated with a server-generated
-  correlation id (uuid4 hex) on every raised error; previously always `null`.
+This cycle hardens the agent-facing contract from a joint Claude + Codex
+audit and completes the 0.5.0 deprecation cycle by removing the legacy tool
+aliases. The headline fix is a correctness bug: multi-IP lookups silently
+returned nothing on a cold cache.
 
 ### Added
 - `ipinfo_summarize_ips(ips, group_by=("country", "asn"), top_n=50)` for
@@ -42,20 +33,17 @@ returned nothing on a cold cache.
   per-IP lookups or a Core+ upgrade instead of retrying a call that can never
   succeed. A batch whose entries were returned but all failed to parse stays a
   retryable `api_error`. (#52)
-- `serverInfo.version` now reports the package version (e.g. `0.5.0`) via
+- `serverInfo.version` now reports the package version (e.g. `0.6.0`) via
   `FastMCP(version=...)`; it previously leaked the FastMCP library version,
   defeating client-side capability fingerprinting and version gating.
 - `website_url` on the server for discoverability.
 - Per-tool `meta.error_codes` lists the stable codes each tool can raise, so
   agents see the branch set from tool introspection without parsing the
   server instructions.
-- `meta.removed_in = "0.6.0"` on the deprecated aliases (was prose-only).
 - `idempotentHint: true` annotation on all read-only tools.
 - A `format: "ip"` JSON Schema hint on IP-string inputs (non-enforcing; soft
   runtime validation still returns structured envelopes for bad input).
 - Coarse progress reporting (`ctx.report_progress`) on the batch lookup path.
-- Schema-level `minItems`/`maxItems` on the deprecated `get_ip_details` alias,
-  matching `ipinfo_lookup_ips`.
 
 ### Changed
 - **Breaking:** `ipinfo_lookup_ips` now defaults to `detail="summary"` (was
@@ -67,6 +55,26 @@ returned nothing on a cold cache.
   shape-parity guarantee is dropped; callers using `record.get("continent")`
   are unaffected, callers using `record["continent"]` should switch to `.get`.
   The tool's output schema is unchanged (those fields remain optional).
+
+### Removed
+- **Breaking:** the deprecated forwarding aliases `get_ip_details`,
+  `get_residential_proxy_info`, and `get_map_url` (deprecated in 0.5.0) are
+  removed as scheduled. Call `ipinfo_lookup_my_ip` / `ipinfo_lookup_ips`,
+  `ipinfo_check_residential_proxy`, and `ipinfo_generate_map_url` respectively.
+  Note that `get_map_url` returned a bare URL string; `ipinfo_generate_map_url`
+  returns a structured `MapResult`.
+
+### Fixed
+- **Batch lookups silently dropped every freshly-fetched IP.** The ipinfo SDK
+  returns fresh batch entries as raw `dict`s (only cache/bogon hits are
+  `Details` objects), but `ipinfo_batch_lookup` kept entries only
+  `if hasattr(details, "all")` — so `ipinfo_lookup_ips` with 2+ uncached IPs
+  returned `[]`. The parser now accepts both shapes. (Single-IP lookups were
+  unaffected; the unit mock returned `Details` objects, masking it — the mock
+  now mirrors the real raw-dict shape, and a live multi-IP smoke test guards
+  the integration path.)
+- `ToolErrorEnvelope.request_id` is now populated with a server-generated
+  correlation id (uuid4 hex) on every raised error; previously always `null`.
 
 ## [0.5.0] - 2026-05-10
 
@@ -226,7 +234,8 @@ The previous tool names remain as forwarding aliases scheduled for removal in
 - Response caching with 1-hour TTL
 - Pydantic models for API responses
 
-[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.2.0...v0.3.0

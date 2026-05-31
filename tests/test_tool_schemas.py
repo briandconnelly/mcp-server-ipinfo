@@ -78,43 +78,20 @@ class TestNewToolSchemas:
         assert tool.parameters.get("required", []) == []
 
 
-class TestDeprecationMetadata:
-    """Deprecated aliases carry tags + meta so cached clients can detect them."""
+class TestRemovedAliases:
+    """The 0.5.0 forwarding aliases were removed in 0.6.0 and must stay gone.
 
-    @pytest.mark.parametrize(
-        ("name", "replacement"),
-        [
-            ("get_ip_details", "ipinfo_lookup_ips"),
-            ("get_residential_proxy_info", "ipinfo_check_residential_proxy"),
-            ("get_map_url", "ipinfo_generate_map_url"),
-        ],
-    )
-    async def test_alias_marked_deprecated(self, registered_tools, name, replacement):
-        tool = registered_tools[name]
-        assert "deprecated" in (tool.tags or set())
-        assert tool.meta is not None
-        assert tool.meta.get("deprecated_since") == "0.5.0"
-        assert tool.meta.get("replaced_by") == replacement
+    Guards the removal contract: an accidental reintroduction of any legacy
+    name would otherwise pass silently, since every other contract test only
+    asserts the surviving tools by positive lookup.
+    """
 
     @pytest.mark.parametrize(
         "name",
         ["get_ip_details", "get_residential_proxy_info", "get_map_url"],
     )
-    async def test_alias_carries_removal_version(self, registered_tools, name):
-        """removed_in is structured meta, not just prose, so clients can gate on it."""
-        tool = registered_tools[name]
-        assert tool.meta.get("removed_in") == "0.6.0"
-
-    async def test_deprecated_list_alias_keeps_array_constraints(
-        self, registered_tools
-    ):
-        """get_ip_details forwards to the batch path, so it carries the same cap."""
-        tool = registered_tools["get_ip_details"]
-        ips_schema = tool.parameters["properties"]["ips"]
-        # Optional[list] nests the array constraints inside an anyOf branch.
-        array_branch = next(b for b in ips_schema["anyOf"] if b.get("type") == "array")
-        assert array_branch["minItems"] == 1
-        assert array_branch["maxItems"] == 500_000
+    async def test_alias_absent_from_registry(self, registered_tools, name):
+        assert name not in registered_tools
 
 
 class TestToolContract:
@@ -169,25 +146,6 @@ class TestToolContract:
         codes = set(registered_tools[name].meta["error_codes"])
         assert "invalid_ip_address" not in codes
         assert "special_ip_unsupported" not in codes
-
-    @pytest.mark.parametrize(
-        ("name", "expected"),
-        [
-            ("get_ip_details", {"no_valid_ips", "too_many_ips", "api_error"}),
-            (
-                "get_residential_proxy_info",
-                {"invalid_ip_address", "auth_insufficient_scope"},
-            ),
-            ("get_map_url", {"no_valid_ips", "timeout"}),
-        ],
-    )
-    async def test_deprecated_aliases_advertise_error_codes(
-        self, registered_tools, name, expected
-    ):
-        """Aliases forward to tools that raise structured errors, so their meta
-        must carry the same error_codes contract as the replacements."""
-        codes = set(registered_tools[name].meta.get("error_codes", []))
-        assert expected <= codes, f"{name} missing {expected - codes}"
 
     @pytest.mark.parametrize(
         "name",

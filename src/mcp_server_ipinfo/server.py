@@ -91,9 +91,6 @@ mcp = FastMCP(
     - ipinfo_generate_map_url(ips): returns a MapResult
       {url, mapped_ip_count, skipped_ips (capped at 100), skipped_count, truncated}.
 
-    Deprecated forwarding aliases, removed in 0.6.0: get_ip_details,
-    get_residential_proxy_info, get_map_url.
-
     NOT in scope: DNS/hostname resolution; CIDR or BGP lookups; historical or
     time-series data; private/loopback/multicast/link-local/reserved IPs
     (filtered at boundary as `special_ip_unsupported`); deanonymizing users
@@ -690,10 +687,7 @@ async def _do_batch_lookup(
     ips: list[str],
     ctx: Context,
 ) -> list[IPDetails]:
-    """Validate, dedupe, cache-check, and look up a batch of IPs.
-
-    Shared between ipinfo_lookup_ips and the deprecated get_ip_details alias.
-    """
+    """Validate, dedupe, cache-check, and look up a batch of IPs."""
     return (await _do_batch_lookup_with_accounting(handler, cache, ips, ctx)).records
 
 
@@ -1103,126 +1097,3 @@ async def ipinfo_generate_map_url(
             "truncated": truncated,
         }
     )
-
-
-# --- Deprecated aliases ------------------------------------------------------
-#
-# Old tool names from <= 0.4.x. They forward to the new tools so cached MCP
-# clients still work for one minor version. Removed in 0.6.0.
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
-    },
-    tags={"deprecated"},
-    meta={
-        "deprecated_since": "0.5.0",
-        "replaced_by": "ipinfo_lookup_ips",
-        "removed_in": "0.6.0",
-        # Forwards to the my_ip and batch paths; the list set is the superset of
-        # both (my_ip raises only upstream codes), so it covers either branch.
-        "error_codes": _LIST_TOOL_ERROR_CODES,
-    },
-)
-async def get_ip_details(
-    ips: Annotated[
-        list[IPString] | None,
-        Field(
-            description=(
-                "[DEPRECATED in 0.5.0; use ipinfo_lookup_my_ip when ips is None, "
-                "or ipinfo_lookup_ips otherwise. Removed in 0.6.0.] "
-                "IP address(es) to analyze (IPv4 or IPv6). Pass a list of one or "
-                "more IPs. If not provided, analyzes the requesting client's IP "
-                "address."
-            ),
-            min_length=1,
-            max_length=MAX_LOOKUP_IPS,
-            examples=[["8.8.8.8"], ["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
-        ),
-    ] = None,
-    ctx: Context = CurrentContext(),
-) -> list[IPDetails]:
-    """[DEPRECATED in 0.5.0 — use ipinfo_lookup_my_ip / ipinfo_lookup_ips. Removed in 0.6.0.]
-
-    Forwards to ipinfo_lookup_my_ip when called with no `ips` (or `ips=None`),
-    and to ipinfo_lookup_ips otherwise. Behavior is otherwise unchanged.
-    """
-    handler, cache = _get_handler_and_cache(ctx)
-    if ips is None:
-        return [await _do_my_ip_lookup(handler, cache, ctx)]
-    return await _do_batch_lookup(handler, cache, ips, ctx)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
-    },
-    tags={"deprecated"},
-    meta={
-        "deprecated_since": "0.5.0",
-        "replaced_by": "ipinfo_check_residential_proxy",
-        "removed_in": "0.6.0",
-        "error_codes": _SINGLE_IP_TOOL_ERROR_CODES,
-    },
-)
-async def get_residential_proxy_info(
-    ip: Annotated[
-        str,
-        Field(
-            description=(
-                "[DEPRECATED in 0.5.0; use ipinfo_check_residential_proxy. Removed "
-                "in 0.6.0.] The IP address to check for residential proxy usage "
-                "(IPv4 or IPv6)."
-            ),
-            examples=["142.250.80.46"],
-        ),
-    ],
-    ctx: Context = CurrentContext(),
-) -> ResidentialProxyDetails:
-    """[DEPRECATED in 0.5.0 — use ipinfo_check_residential_proxy. Removed in 0.6.0.]"""
-    return await ipinfo_check_residential_proxy(ip=ip, ctx=ctx)
-
-
-@mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
-    },
-    tags={"deprecated"},
-    meta={
-        "deprecated_since": "0.5.0",
-        "replaced_by": "ipinfo_generate_map_url",
-        "removed_in": "0.6.0",
-        "error_codes": _LIST_TOOL_ERROR_CODES,
-    },
-)
-async def get_map_url(
-    ips: Annotated[
-        list[IPString],
-        Field(
-            description=(
-                "[DEPRECATED in 0.5.0; use ipinfo_generate_map_url. Removed in "
-                "0.6.0.] List of IP addresses to visualize on a map (IPv4 or "
-                "IPv6). Maximum 500,000 IPs."
-            ),
-            min_length=1,
-            max_length=MAX_LOOKUP_IPS,
-            examples=[["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
-        ),
-    ],
-    ctx: Context = CurrentContext(),
-) -> str:
-    """[DEPRECATED in 0.5.0 — use ipinfo_generate_map_url. Removed in 0.6.0.]
-
-    Returns just the bare map URL string for 0.4.x cached-client parity.
-    Callers wanting structured skip/truncation metadata should call
-    ipinfo_generate_map_url directly.
-    """
-    result = await ipinfo_generate_map_url(ips=ips, ctx=ctx)
-    return str(result.url)
