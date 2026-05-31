@@ -18,6 +18,7 @@ from pydantic import Field
 
 from .cache import IPInfoCache
 from .ipinfo import (
+    UPSTREAM_NO_RESULT_REASON,
     create_async_handler,
     ipinfo_batch_lookup,
     ipinfo_get_map_url,
@@ -74,7 +75,10 @@ mcp = FastMCP(
       for every field. Results return in input order after dedup and
       invalid-IP filtering. IPs that fail upstream are dropped from the list
       and logged (compare returned IPDetails.ip against your input to find
-      them); if every attempted lookup fails, a temporary api_error is raised.
+      them); if the batch resolves no IPs at all, the failure is raised rather
+      than masked — auth_insufficient_scope when the upstream returned nothing
+      (token tier likely lacks /batch access; look IPs up one at a time or
+      upgrade to Core+), otherwise a retryable api_error.
     - ipinfo_check_residential_proxy(ip): Enterprise residential-proxy add-on
       required (tagged "enterprise").
     - ipinfo_generate_map_url(ips): returns a MapResult
@@ -601,16 +605,52 @@ async def _do_batch_lookup(
     ordered_results = [all_results[ip] for ip in valid_ips if ip in all_results]
 
     # If every attempted lookup failed (and nothing was cached), don't return
-    # an empty list that masks a systemic upstream failure — raise a temporary
-    # error so the agent retries instead of treating "" as "no data".
+    # an empty list that masks the failure. This branch is only reachable from
+    # the multi-IP batch path: the single-IP path (above) raises a typed
+    # exception on failure, so it never lands here with a populated `failed`.
+    #
+    # Two total-failure modes are distinguished by the recorded reasons:
+    #   - Every IP carries UPSTREAM_NO_RESULT_REASON => the /batch response was
+    #     wholesale-empty. That is overwhelmingly a permanent tier/scope problem:
+    #     the ipinfo SDK swallows the /batch authorization failure for Lite-tier
+    #     tokens (which must use /batch/lite) and returns an empty map rather
+    #     than raising. Surface a non-temporary auth_insufficient_scope so the
+    #     agent switches to per-IP lookups instead of retrying a call that can
+    #     never succeed. (A genuinely transient total outage would also fail the
+    #     suggested per-IP fallback, so the agent still learns it is down.)
+    #   - Otherwise the upstream returned entries that failed to parse (malformed
+    #     payload or schema drift). Keep that a retryable api_error rather than
+    #     mislabeling it as a tier problem.
     if not ordered_results and failed:
+        upstream_returned_nothing = all(
+            reason == UPSTREAM_NO_RESULT_REASON for reason in failed.values()
+        )
+        if upstream_returned_nothing:
+            _raise_envelope(
+                "auth_insufficient_scope",
+                f"Batch lookup returned no results for any of the "
+                f"{len(ips_to_lookup)} attempted IP(s).",
+                temporary=False,
+                field="ips",
+                repair={
+                    "hint": (
+                        "The configured IPINFO_API_TOKEN may not have access to "
+                        "the /batch endpoint; Lite-tier tokens must use "
+                        "/batch/lite, which this server does not yet target. "
+                        "Look the IPs up one at a time (call ipinfo_lookup_ips "
+                        "with a single IP, or ipinfo_lookup_my_ip), or upgrade "
+                        "to a Core+ plan for multi-IP lookups."
+                    ),
+                    "attempted_count": len(ips_to_lookup),
+                },
+            )
         _raise_envelope(
             "api_error",
             f"All {len(failed)} attempted IP lookup(s) failed upstream.",
             temporary=True,
             field="ips",
             repair={
-                "hint": "Retry; the upstream batch returned no usable results.",
+                "hint": "Retry; the upstream returned no usable results.",
                 "failed_count": len(failed),
             },
         )
@@ -688,8 +728,11 @@ async def ipinfo_lookup_ips(
 
     Returns a list in input order (after dedup and invalid-IP filtering); match
     results back to your input via the `ip` field. IPs that fail upstream are
-    omitted and logged, and if every attempted lookup fails a temporary
-    `api_error` is raised. Defaults to `detail="summary"` (heavy nested blocks
+    omitted and logged; if the batch resolves no IPs at all the failure is
+    raised rather than masked — `auth_insufficient_scope` when the upstream
+    returned nothing (token tier likely lacks `/batch` access; look IPs up one
+    at a time or upgrade to Core+), otherwise a retryable `api_error`. Defaults
+    to `detail="summary"` (heavy nested blocks
     omitted); pass `detail="full"` for every field. Capped at 500,000 IPs per
     call (`too_many_ips` if exceeded). Higher plan tiers populate more fields;
     see the server instructions for the Lite/Core/Plus/Enterprise tier mapping.

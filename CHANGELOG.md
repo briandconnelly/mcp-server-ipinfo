@@ -25,9 +25,17 @@ returned nothing on a cold cache.
 
 ### Added
 - Partial batch failures are surfaced: IPs that fail upstream are logged
-  per-IP (capped) and counted in the summary instead of vanishing; if *every*
-  attempted lookup fails, a temporary `api_error` is raised rather than
-  returning an empty list that masks a systemic failure.
+  per-IP (capped) and counted in the summary instead of vanishing. If a
+  multi-IP batch resolves *no* IPs at all, the failure is raised rather than
+  masked behind an empty list, and the two total-failure modes are told apart:
+  a wholesale-empty `/batch` response (every IP missing from the response) now
+  raises a non-temporary `auth_insufficient_scope` instead of a "retry"
+  `api_error` — it is overwhelmingly a token-tier problem, since the SDK
+  swallows the `/batch` authorization failure for Lite-tier tokens (which must
+  use `/batch/lite`) and returns an empty map. The hint points the agent at
+  per-IP lookups or a Core+ upgrade instead of retrying a call that can never
+  succeed. A batch whose entries were returned but all failed to parse stays a
+  retryable `api_error`. (#52)
 - `serverInfo.version` now reports the package version (e.g. `0.5.0`) via
   `FastMCP(version=...)`; it previously leaked the FastMCP library version,
   defeating client-side capability fingerprinting and version gating.

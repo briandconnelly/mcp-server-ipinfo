@@ -100,7 +100,15 @@ class TestLookupIpsFailureSurfacing:
         )
         assert "9.9.9.9" in warnings
 
-    async def test_total_failure_raises_temporary(self, mock_context_with_state):
+    async def test_wholesale_empty_batch_raises_insufficient_scope(
+        self, mock_context_with_state
+    ):
+        """A batch that returns nothing for every IP is a permanent tier/scope
+        problem (e.g. a Lite token, whose /batch access is denied and swallowed
+        by the SDK as an empty map), not a transient failure. It must raise a
+        non-temporary auth_insufficient_scope so the agent switches to per-IP
+        lookups instead of retrying a call that can never succeed.
+        """
         from mcp_server_ipinfo.server import ipinfo_lookup_ips
 
         handler = mock_context_with_state.lifespan_context["ipinfo_handler"]
@@ -109,6 +117,41 @@ class TestLookupIpsFailureSurfacing:
             return {}
 
         handler.getBatchDetails = empty
+
+        with pytest.raises(ToolError) as exc:
+            await ipinfo_lookup_ips(
+                ips=["8.8.8.8", "9.9.9.9"], ctx=mock_context_with_state
+            )
+        env = json.loads(str(exc.value))
+        assert env["code"] == "auth_insufficient_scope"
+        assert env["temporary"] is False
+        assert env["repair"]["attempted_count"] == 2
+        # The hint must point the agent at the per-IP workaround, not "retry".
+        hint = env["repair"]["hint"].lower()
+        assert "batch" in hint
+        assert "one at a time" in hint  # per-IP fallback
+        assert "core+" in hint  # upgrade path
+        assert "retry" not in hint
+
+    async def test_all_unparseable_batch_raises_temporary_api_error(
+        self, mock_context_with_state
+    ):
+        """A batch where the upstream returned entries but every one failed to
+        parse is NOT a tier/scope problem — it is a malformed/transient upstream
+        payload. It must stay a retryable api_error, not be misclassified as a
+        permanent auth_insufficient_scope (which is reserved for the
+        empty-result, /batch-access signature).
+        """
+        from mcp_server_ipinfo.server import ipinfo_lookup_ips
+
+        handler = mock_context_with_state.lifespan_context["ipinfo_handler"]
+
+        async def all_garbage(ip_addresses, raise_on_fail=True):
+            # Entries are present (so not an empty /batch response) but each
+            # lacks the required `ip` field, so IPDetails validation fails.
+            return {ip: {"error": "nope"} for ip in ip_addresses}
+
+        handler.getBatchDetails = all_garbage
 
         with pytest.raises(ToolError) as exc:
             await ipinfo_lookup_ips(

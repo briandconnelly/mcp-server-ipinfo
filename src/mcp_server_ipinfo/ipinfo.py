@@ -89,6 +89,14 @@ async def ipinfo_lookup(handler: ipinfo.AsyncHandler, ip: str | None) -> IPDetai
     )
 
 
+# Failure reason recorded when the upstream /batch response omitted an IP
+# entirely (as opposed to returning an entry that failed to parse). When every
+# attempted IP carries this reason, the upstream returned a wholesale-empty
+# map — the signature of a token whose tier lacks /batch access. Callers key
+# off this constant to tell that apart from per-IP parse failures.
+UPSTREAM_NO_RESULT_REASON = "no result returned by upstream"
+
+
 async def ipinfo_batch_lookup(
     handler: ipinfo.AsyncHandler,
     ips: list[str],
@@ -148,7 +156,7 @@ async def ipinfo_batch_lookup(
     # the caller gets a complete accounting of the request.
     for ip in ips:
         if ip not in results and ip not in failed:
-            failed[ip] = "no result returned by upstream"
+            failed[ip] = UPSTREAM_NO_RESULT_REASON
 
     return results, failed
 
