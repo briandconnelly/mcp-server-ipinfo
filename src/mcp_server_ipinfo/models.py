@@ -437,13 +437,17 @@ class SummaryResult(BaseModel):
     """Top country-code buckets when requested."""
 
     by_continent: list[GroupCount] | None = None
-    """Top continent-code buckets when requested and available from the plan."""
+    """Top continent-code buckets when requested."""
 
     by_asn: list[GroupCount] | None = None
     """Top ASN/organization buckets when requested."""
 
     by_privacy: list[GroupCount] | None = None
-    """Privacy-flag buckets when requested and available from the plan."""
+    """Privacy-flag buckets when requested and available from the plan.
+
+    Privacy flags are independent, multi-label buckets: one IP can count
+    toward multiple flags, so privacy percentages may sum above 100.
+    """
 
     truncated_groups: dict[str, int] = Field(default_factory=dict)
     """Group name to total distinct bucket count when output was capped."""
