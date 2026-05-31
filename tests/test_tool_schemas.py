@@ -78,6 +78,22 @@ class TestNewToolSchemas:
         assert tool.parameters.get("required", []) == []
 
 
+class TestRemovedAliases:
+    """The 0.5.0 forwarding aliases were removed in 0.6.0 and must stay gone.
+
+    Guards the removal contract: an accidental reintroduction of any legacy
+    name would otherwise pass silently, since every other contract test only
+    asserts the surviving tools by positive lookup.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        ["get_ip_details", "get_residential_proxy_info", "get_map_url"],
+    )
+    async def test_alias_absent_from_registry(self, registered_tools, name):
+        assert name not in registered_tools
+
+
 class TestToolContract:
     """Agent-facing contract metadata: error codes, idempotency hints."""
 
