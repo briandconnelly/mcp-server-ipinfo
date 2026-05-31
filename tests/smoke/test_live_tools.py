@@ -1,10 +1,10 @@
-"""Live-API smoke tests for the v0.5.0 tool surface.
+"""Live-API smoke tests for the production tool surface.
 
 Run with::
 
     IPINFO_API_TOKEN=<your-token> uv run pytest -m smoke --no-cov
 
-Without the token the tests skip cleanly. Each run makes ~7 live API calls
+Without the token the tests skip cleanly. Each run makes ~8 live API calls
 (the structured-error envelope test makes zero — pure boundary rejection).
 """
 
@@ -112,6 +112,24 @@ async def test_lookup_ips_summary_mode(client):
         assert heavy not in d, f"{heavy} should be omitted in summary mode"
     assert d.get("city"), "city should survive summary mode"
     assert d.get("country"), "country should survive summary mode"
+
+
+async def test_summarize_ips_returns_aggregate(client):
+    ips = ["8.8.8.8", "1.1.1.1", "208.67.222.222"]
+    try:
+        r = await client.call_tool(
+            "ipinfo_summarize_ips",
+            arguments={"ips": ips, "group_by": ["country", "asn"], "top_n": 50},
+        )
+    except ToolError as e:
+        _skip_if_transient(e)
+    d = r.structured_content
+    assert d["mapped_ip_count"] == 3
+    assert d["skipped_count"] == 0
+    assert d["failed_count"] == 0
+    assert d["by_country"], "country summary missing"
+    assert d["by_asn"], "ASN summary missing"
+    assert d["truncated_groups"] == {}
 
 
 async def test_check_residential_proxy_envelope_path(client):

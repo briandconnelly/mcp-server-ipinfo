@@ -1,8 +1,10 @@
 import ipaddress
 import json
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from typing import Annotated, Any, Literal, NoReturn
@@ -26,10 +28,12 @@ from .ipinfo import (
     ipinfo_resproxy_lookup,
 )
 from .models import (
+    GroupCount,
     IPDetails,
     MapResult,
     ResidentialProxyDetails,
     SkippedIP,
+    SummaryResult,
     ToolErrorCode,
     ToolErrorEnvelope,
 )
@@ -79,6 +83,9 @@ mcp = FastMCP(
       than masked — auth_insufficient_scope when the upstream returned nothing
       (token tier likely lacks /batch access; look IPs up one at a time or
       upgrade to Core+), otherwise a retryable api_error.
+    - ipinfo_summarize_ips(ips, group_by=["country", "asn"]): batch lookup
+      plus server-side aggregation into fixed-size counts/percentages, for
+      large log-analysis tasks where per-IP records would waste context.
     - ipinfo_check_residential_proxy(ip): Enterprise residential-proxy add-on
       required (tagged "enterprise").
     - ipinfo_generate_map_url(ips): returns a MapResult
@@ -152,6 +159,7 @@ _HEAVY_NESTED_FIELDS: tuple[str, ...] = (
 )
 
 DetailLevel = Literal["summary", "full"]
+SummaryGroup = Literal["country", "continent", "asn", "privacy"]
 
 # String type for IP-address inputs. The ``format: "ip"`` hint surfaces in the
 # generated JSON Schema (on the array ``items`` for list params) so agents can
@@ -199,6 +207,8 @@ _SINGLE_IP_TOOL_ERROR_CODES = [
 _MY_IP_TOOL_ERROR_CODES = list(_UPSTREAM_ERROR_CODES)
 
 MAX_LOOKUP_IPS = 500_000
+MAX_SUMMARY_GROUPS = 500
+DEFAULT_SUMMARY_TOP_N = 50
 
 # Cap on the size of MapResult.skipped_ips so a 500K-IP submission with all
 # entries filtered cannot inflate the response. truncated=True signals overflow.
@@ -213,6 +223,16 @@ MAX_SKIP_WARNINGS = 100
 # even if the underlying httpx client misbehaves; httpx itself enforces a
 # tighter per-request timeout (DEFAULT_MAP_TIMEOUT_SECONDS).
 MAP_TOOL_TIMEOUT_SECONDS = 60.0
+SUMMARY_TOOL_TIMEOUT_SECONDS = 120.0
+
+
+@dataclass(frozen=True)
+class _BatchLookupResult:
+    """Internal batch result with accounting needed by aggregate tools."""
+
+    records: list[IPDetails]
+    skipped: list[tuple[str, str]]
+    failed: dict[str, str]
 
 
 def _raise_envelope(
@@ -518,15 +538,15 @@ async def _do_my_ip_lookup(
         _raise_from_upstream(e)
 
 
-async def _do_batch_lookup(
+async def _do_batch_lookup_with_accounting(
     handler: ipinfo.AsyncHandler,
     cache: IPInfoCache,
     ips: list[str],
     ctx: Context,
-) -> list[IPDetails]:
+) -> _BatchLookupResult:
     """Validate, dedupe, cache-check, and look up a batch of IPs.
 
-    Shared between ipinfo_lookup_ips and the deprecated get_ip_details alias.
+    Shared by batch tools that need records plus skipped/failed accounting.
     """
     # Defense-in-depth: schema enforces the cap, but direct Python invocation
     # (or any caller bypassing FastMCP validation) can still pass an arbitrary
@@ -661,7 +681,20 @@ async def _do_batch_lookup(
         f"{len(failed)} failed upstream)"
     )
 
-    return ordered_results
+    return _BatchLookupResult(records=ordered_results, skipped=skipped, failed=failed)
+
+
+async def _do_batch_lookup(
+    handler: ipinfo.AsyncHandler,
+    cache: IPInfoCache,
+    ips: list[str],
+    ctx: Context,
+) -> list[IPDetails]:
+    """Validate, dedupe, cache-check, and look up a batch of IPs.
+
+    Shared between ipinfo_lookup_ips and the deprecated get_ip_details alias.
+    """
+    return (await _do_batch_lookup_with_accounting(handler, cache, ips, ctx)).records
 
 
 def _build_skipped_list(
@@ -671,6 +704,131 @@ def _build_skipped_list(
     truncated = len(skipped) > MAX_SKIPPED_IPS_REPORTED
     capped = skipped[:MAX_SKIPPED_IPS_REPORTED]
     return [SkippedIP(ip=ip, reason=reason) for ip, reason in capped], truncated
+
+
+def _asn_summary_key(details: IPDetails) -> str | None:
+    """Return a stable ASN bucket key from Core+ ASN fields or Lite org text."""
+    if details.asn is not None:
+        asn = details.asn.asn
+        name = details.asn.name
+        if asn and name:
+            return f"{asn} {name}"
+        return asn or name
+    return details.org
+
+
+def _continent_summary_key(details: IPDetails) -> str | None:
+    """Return the most compact continent bucket key available."""
+    if details.continent is None:
+        return None
+    return details.continent.code or details.continent.name
+
+
+def _count_groups(
+    keys: list[str],
+    *,
+    denominator: int,
+    top_n: int,
+    group_name: str,
+    truncated_groups: dict[str, int],
+) -> list[GroupCount]:
+    """Convert raw group keys into sorted, capped GroupCount records."""
+    counts = Counter(keys)
+    total_distinct = len(counts)
+    if total_distinct > top_n:
+        truncated_groups[group_name] = total_distinct
+
+    return [
+        GroupCount(
+            key=key,
+            count=count,
+            percent=round((count / denominator) * 100, 2) if denominator else 0.0,
+        )
+        for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[
+            :top_n
+        ]
+    ]
+
+
+def _summarize_ip_details(
+    records: list[IPDetails],
+    *,
+    skipped_count: int,
+    failed_count: int,
+    group_by: list[SummaryGroup],
+    top_n: int,
+) -> SummaryResult:
+    """Aggregate IPDetails into fixed-size count and percentage summaries."""
+    mapped_count = len(records)
+    truncated_groups: dict[str, int] = {}
+
+    unique_groups = list(dict.fromkeys(group_by))
+    by_country = None
+    by_continent = None
+    by_asn = None
+    by_privacy = None
+
+    if "country" in unique_groups:
+        by_country = _count_groups(
+            [record.country for record in records if record.country],
+            denominator=mapped_count,
+            top_n=top_n,
+            group_name="country",
+            truncated_groups=truncated_groups,
+        )
+
+    if "continent" in unique_groups:
+        by_continent = _count_groups(
+            [
+                key
+                for key in (_continent_summary_key(record) for record in records)
+                if key is not None
+            ],
+            denominator=mapped_count,
+            top_n=top_n,
+            group_name="continent",
+            truncated_groups=truncated_groups,
+        )
+
+    if "asn" in unique_groups:
+        by_asn = _count_groups(
+            [
+                key
+                for key in (_asn_summary_key(record) for record in records)
+                if key is not None
+            ],
+            denominator=mapped_count,
+            top_n=top_n,
+            group_name="asn",
+            truncated_groups=truncated_groups,
+        )
+
+    if "privacy" in unique_groups:
+        privacy_keys: list[str] = []
+        for record in records:
+            if record.privacy is None:
+                continue
+            for key in ("vpn", "proxy", "tor", "relay", "hosting"):
+                if getattr(record.privacy, key):
+                    privacy_keys.append(key)
+        by_privacy = _count_groups(
+            privacy_keys,
+            denominator=mapped_count,
+            top_n=top_n,
+            group_name="privacy",
+            truncated_groups=truncated_groups,
+        )
+
+    return SummaryResult(
+        mapped_ip_count=mapped_count,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        by_country=by_country,
+        by_continent=by_continent,
+        by_asn=by_asn,
+        by_privacy=by_privacy,
+        truncated_groups=truncated_groups,
+    )
 
 
 @mcp.tool(
@@ -748,6 +906,70 @@ async def ipinfo_lookup_ips(
         projected: list[Any] = [_project_summary(r) for r in results]
         return projected
     return results
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    meta={"introduced_in": "0.6.0", "error_codes": _LIST_TOOL_ERROR_CODES},
+    timeout=SUMMARY_TOOL_TIMEOUT_SECONDS,
+)
+async def ipinfo_summarize_ips(
+    ips: Annotated[
+        list[IPString],
+        Field(
+            description="IPv4/IPv6 addresses to aggregate. Invalid or special-use IPs are filtered.",
+            min_length=1,
+            max_length=MAX_LOOKUP_IPS,
+            examples=[["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
+        ),
+    ],
+    group_by: Annotated[
+        tuple[SummaryGroup, ...],
+        Field(
+            description=(
+                "Summary dimensions to include. Empty returns only mapped, "
+                "skipped, and failed counts."
+            ),
+            max_length=4,
+            examples=[["country", "asn"], ["privacy"], []],
+        ),
+    ] = ("country", "asn"),
+    top_n: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum buckets to return per requested group. "
+                "truncated_groups reports the true distinct count when capped."
+            ),
+            ge=1,
+            le=MAX_SUMMARY_GROUPS,
+        ),
+    ] = DEFAULT_SUMMARY_TOP_N,
+    ctx: Context = CurrentContext(),
+) -> SummaryResult:
+    """Aggregate one or more IP lookups into counts and percentages.
+
+    Uses the same validation, deduplication, cache, and upstream batch lookup
+    path as `ipinfo_lookup_ips`, but returns fixed-size summary buckets instead
+    of per-IP records. This is the preferred tool for large log-analysis tasks
+    such as "where did visitors come from?" when the caller does not need the
+    underlying records. Percentages are based on `mapped_ip_count`; filtered
+    and failed IPs are counted separately. Errors raise ToolError with a
+    JSON-encoded envelope.
+    """
+    handler, cache = _get_handler_and_cache(ctx)
+    batch = await _do_batch_lookup_with_accounting(handler, cache, ips, ctx)
+    return _summarize_ip_details(
+        batch.records,
+        skipped_count=len(batch.skipped),
+        failed_count=len(batch.failed),
+        group_by=list(group_by),
+        top_n=top_n,
+    )
 
 
 @mcp.tool(

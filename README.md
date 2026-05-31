@@ -34,6 +34,7 @@ To run the latest from `main`:
 
 - **`ipinfo_lookup_my_ip()`** — Geolocate the calling client's own IP. Takes no arguments. On stdio transports the result reflects this server's outbound IP, not the end user's.
 - **`ipinfo_lookup_ips(ips, detail="summary")`** — Geolocate one or more specified IPs. Defaults to `detail="summary"`, which **omits** heavy nested blocks (continent, flags, currency, abuse, domains) for batch token savings; pass `detail="full"` for every field. Capped at 500,000 IPs per call. Invalid or special-use addresses (private, loopback, etc.) are filtered with `ctx.warning()` and excluded from the result list, as are IPs that fail upstream — match returned `IPDetails.ip` values back to your input to detect what was dropped. If every attempted lookup fails, a temporary `api_error` is raised.
+- **`ipinfo_summarize_ips(ips, group_by=("country", "asn"), top_n=50)`** — Geolocate and aggregate a batch into fixed-size counts and percentages by country, continent, ASN, and/or privacy flags. Use this for large log-analysis tasks where per-IP records would waste context. Returns mapped, skipped, and failed counts plus capped top-N groups.
 - **`ipinfo_check_residential_proxy(ip)`** — Check whether an IP is a known residential-proxy exit node. Tagged `enterprise` — requires the IPInfo residential-proxy add-on.
 - **`ipinfo_generate_map_url(ips)`** — Build an interactive ipinfo.io map for a set of IPs. Returns a `MapResult` with the URL, the count that made the map, the IPs filtered out (with reasons, capped at 100), and a `truncated` flag.
 
