@@ -53,8 +53,9 @@ class ToolErrorEnvelope(BaseModel):
     """Server-generated correlation ID (hex) for this error occurrence.
 
     Populated on every raised envelope so an agent can cite a stable identifier
-    when reporting a failure; the same ID is intended to appear in server logs
-    for the request. Not an upstream IPInfo request ID."""
+    when reporting a failure. It is generated at raise time and unique per
+    occurrence; the server does not currently emit it to its own logs, so do not
+    rely on it to grep server-side. Not an upstream IPInfo request ID."""
 
 
 class ASNDetails(BaseModel):

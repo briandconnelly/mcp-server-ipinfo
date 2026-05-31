@@ -102,7 +102,6 @@ class TestToolContract:
             (
                 "ipinfo_lookup_ips",
                 {
-                    "invalid_ip_address",
                     "no_valid_ips",
                     "too_many_ips",
                     "quota_exceeded",
@@ -126,6 +125,33 @@ class TestToolContract:
         codes = set(registered_tools["ipinfo_lookup_my_ip"].meta["error_codes"])
         assert "invalid_ip_address" not in codes
         assert "too_many_ips" not in codes
+
+    @pytest.mark.parametrize("name", ["ipinfo_lookup_ips", "ipinfo_generate_map_url"])
+    async def test_list_tools_omit_per_item_input_codes(self, registered_tools, name):
+        """List tools demote per-item invalid/special IPs to the skipped list
+        rather than raising, so those codes must not be advertised as raiseable."""
+        codes = set(registered_tools[name].meta["error_codes"])
+        assert "invalid_ip_address" not in codes
+        assert "special_ip_unsupported" not in codes
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("get_ip_details", {"no_valid_ips", "too_many_ips", "api_error"}),
+            (
+                "get_residential_proxy_info",
+                {"invalid_ip_address", "auth_insufficient_scope"},
+            ),
+            ("get_map_url", {"no_valid_ips", "timeout"}),
+        ],
+    )
+    async def test_deprecated_aliases_advertise_error_codes(
+        self, registered_tools, name, expected
+    ):
+        """Aliases forward to tools that raise structured errors, so their meta
+        must carry the same error_codes contract as the replacements."""
+        codes = set(registered_tools[name].meta.get("error_codes", []))
+        assert expected <= codes, f"{name} missing {expected - codes}"
 
     @pytest.mark.parametrize(
         "name",

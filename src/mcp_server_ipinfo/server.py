@@ -158,9 +158,19 @@ IPString = Annotated[str, Field(json_schema_extra={"format": "ip"})]
 
 # Stable error codes each tool can raise, surfaced in tool ``meta`` so an agent
 # introspecting the tool list sees the branch set without parsing instructions.
-_INPUT_VALIDATION_ERROR_CODES = (
+# This advertises the *raiseable* set — codes the boundary demotes to data
+# (see below) are deliberately excluded so the contract stays accurate.
+#
+# Per-item input validation: in the list tools these never reach the caller as
+# errors. ``_filter_valid_ips`` catches them and routes the offending IP into
+# the ``skipped`` list instead, so only the single-IP tool raises them.
+_PER_ITEM_INPUT_ERROR_CODES = (
     "invalid_ip_address",
     "special_ip_unsupported",
+)
+# List-level input validation: raised by the list tools when the whole batch is
+# unusable (all inputs filtered) or oversized.
+_LIST_INPUT_ERROR_CODES = (
     "no_valid_ips",
     "too_many_ips",
 )
@@ -172,12 +182,13 @@ _UPSTREAM_ERROR_CODES = (
     "api_error",
     "unknown_error",
 )
-# List-input tools (lookup_ips, generate_map_url) can raise the full set.
-_LIST_TOOL_ERROR_CODES = list(_INPUT_VALIDATION_ERROR_CODES + _UPSTREAM_ERROR_CODES)
-# Single-IP tools validate one address but never hit the list-level codes.
+# List-input tools (lookup_ips, generate_map_url) demote per-item invalid/special
+# IPs to the skipped list rather than raising, so they advertise only the
+# list-level input codes plus the upstream set.
+_LIST_TOOL_ERROR_CODES = list(_LIST_INPUT_ERROR_CODES + _UPSTREAM_ERROR_CODES)
+# Single-IP tools validate one address, so the per-item codes DO reach the caller.
 _SINGLE_IP_TOOL_ERROR_CODES = [
-    "invalid_ip_address",
-    "special_ip_unsupported",
+    *_PER_ITEM_INPUT_ERROR_CODES,
     *_UPSTREAM_ERROR_CODES,
 ]
 # my_ip takes no input, so only upstream/auth codes apply.
@@ -846,6 +857,9 @@ async def ipinfo_generate_map_url(
         "deprecated_since": "0.5.0",
         "replaced_by": "ipinfo_lookup_ips",
         "removed_in": "0.6.0",
+        # Forwards to the my_ip and batch paths; the list set is the superset of
+        # both (my_ip raises only upstream codes), so it covers either branch.
+        "error_codes": _LIST_TOOL_ERROR_CODES,
     },
 )
 async def get_ip_details(
@@ -888,6 +902,7 @@ async def get_ip_details(
         "deprecated_since": "0.5.0",
         "replaced_by": "ipinfo_check_residential_proxy",
         "removed_in": "0.6.0",
+        "error_codes": _SINGLE_IP_TOOL_ERROR_CODES,
     },
 )
 async def get_residential_proxy_info(
@@ -919,6 +934,7 @@ async def get_residential_proxy_info(
         "deprecated_since": "0.5.0",
         "replaced_by": "ipinfo_generate_map_url",
         "removed_in": "0.6.0",
+        "error_codes": _LIST_TOOL_ERROR_CODES,
     },
 )
 async def get_map_url(
