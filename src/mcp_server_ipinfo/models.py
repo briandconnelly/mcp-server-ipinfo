@@ -50,7 +50,12 @@ class ToolErrorEnvelope(BaseModel):
     """Free-form repair guidance: hint text, alternative tool, allowed values."""
 
     request_id: str | None = None
-    """Correlation identifier for the originating request, if available."""
+    """Server-generated correlation ID (hex) for this error occurrence.
+
+    Populated on every raised envelope so an agent can cite a stable identifier
+    when reporting a failure. It is generated at raise time and unique per
+    occurrence; the server does not currently emit it to its own logs, so do not
+    rely on it to grep server-side. Not an upstream IPInfo request ID."""
 
 
 class ASNDetails(BaseModel):

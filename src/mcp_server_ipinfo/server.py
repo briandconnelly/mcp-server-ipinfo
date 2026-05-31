@@ -1,7 +1,10 @@
 import ipaddress
 import json
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Annotated, Any, Literal, NoReturn
 
 import httpx
@@ -43,9 +46,21 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[dict]:
         await handler.deinit()
 
 
+# Resolve the installed package version so serverInfo.version reports this
+# server's release (e.g. "0.5.0"), not the FastMCP library version. Clients
+# fingerprint and version-gate on this; reporting the dependency version would
+# hide releases such as the 0.6.0 alias removal.
+try:
+    __version__ = _pkg_version("mcp-server-ipinfo")
+except PackageNotFoundError:  # pragma: no cover - editable tree without metadata
+    __version__ = "0.0.0+unknown"
+
+
 # Create an MCP server
 mcp = FastMCP(
     name="IP Address Geolocation and Internet Service Provider Lookup",
+    version=__version__,
+    website_url="https://github.com/briandconnelly/mcp-server-ipinfo",
     instructions="""
     Geolocate IPv4/IPv6 addresses via ipinfo.io: location, ISP, ASN, and
     (on paid plans) privacy/VPN/Tor/proxy flags, carrier, company, abuse
@@ -53,9 +68,13 @@ mcp = FastMCP(
 
     Tools:
     - ipinfo_lookup_my_ip(): the calling client's own IP (no args).
-    - ipinfo_lookup_ips(ips, detail="full"): batch lookup; detail="summary"
-      nulls heavy nested blocks (continent, country_flag*, country_currency,
-      abuse, domains) for token savings while preserving shape.
+    - ipinfo_lookup_ips(ips, detail="summary"): batch lookup. The default
+      "summary" OMITS heavy nested blocks (continent, country_flag*,
+      country_currency, abuse, domains) for token savings; pass detail="full"
+      for every field. Results return in input order after dedup and
+      invalid-IP filtering. IPs that fail upstream are dropped from the list
+      and logged (compare returned IPDetails.ip against your input to find
+      them); if every attempted lookup fails, a temporary api_error is raised.
     - ipinfo_check_residential_proxy(ip): Enterprise residential-proxy add-on
       required (tagged "enterprise").
     - ipinfo_generate_map_url(ips): returns a MapResult
@@ -130,6 +149,51 @@ _HEAVY_NESTED_FIELDS: tuple[str, ...] = (
 
 DetailLevel = Literal["summary", "full"]
 
+# String type for IP-address inputs. The ``format: "ip"`` hint surfaces in the
+# generated JSON Schema (on the array ``items`` for list params) so agents can
+# see the expected shape without a hard pattern. Validation stays soft and
+# runtime so malformed/special IPs return a friendly structured envelope rather
+# than a schema-level 422.
+IPString = Annotated[str, Field(json_schema_extra={"format": "ip"})]
+
+# Stable error codes each tool can raise, surfaced in tool ``meta`` so an agent
+# introspecting the tool list sees the branch set without parsing instructions.
+# This advertises the *raiseable* set — codes the boundary demotes to data
+# (see below) are deliberately excluded so the contract stays accurate.
+#
+# Per-item input validation: in the list tools these never reach the caller as
+# errors. ``_filter_valid_ips`` catches them and routes the offending IP into
+# the ``skipped`` list instead, so only the single-IP tool raises them.
+_PER_ITEM_INPUT_ERROR_CODES = (
+    "invalid_ip_address",
+    "special_ip_unsupported",
+)
+# List-level input validation: raised by the list tools when the whole batch is
+# unusable (all inputs filtered) or oversized.
+_LIST_INPUT_ERROR_CODES = (
+    "no_valid_ips",
+    "too_many_ips",
+)
+_UPSTREAM_ERROR_CODES = (
+    "auth_invalid",
+    "auth_insufficient_scope",
+    "quota_exceeded",
+    "timeout",
+    "api_error",
+    "unknown_error",
+)
+# List-input tools (lookup_ips, generate_map_url) demote per-item invalid/special
+# IPs to the skipped list rather than raising, so they advertise only the
+# list-level input codes plus the upstream set.
+_LIST_TOOL_ERROR_CODES = list(_LIST_INPUT_ERROR_CODES + _UPSTREAM_ERROR_CODES)
+# Single-IP tools validate one address, so the per-item codes DO reach the caller.
+_SINGLE_IP_TOOL_ERROR_CODES = [
+    *_PER_ITEM_INPUT_ERROR_CODES,
+    *_UPSTREAM_ERROR_CODES,
+]
+# my_ip takes no input, so only upstream/auth codes apply.
+_MY_IP_TOOL_ERROR_CODES = list(_UPSTREAM_ERROR_CODES)
+
 MAX_LOOKUP_IPS = 500_000
 
 # Cap on the size of MapResult.skipped_ips so a 500K-IP submission with all
@@ -170,6 +234,7 @@ def _raise_envelope(
         value=value,
         retry_after_ms=retry_after_ms,
         repair=repair,
+        request_id=uuid.uuid4().hex,
     )
     raise ToolError(envelope.model_dump_json())
 
@@ -421,15 +486,18 @@ async def _filter_valid_ips(
     return valid, skipped
 
 
-def _summarize_for_batch(details: IPDetails) -> IPDetails:
-    """Drop heavy nested blocks from an IPDetails for batch token efficiency.
+def _project_summary(details: IPDetails) -> dict[str, Any]:
+    """Project an IPDetails to a token-lean dict for ``detail="summary"``.
 
-    Returns a copy with the deeply-nested decorative fields nulled out
-    (continent, country_flag, country_flag_url, country_currency, abuse,
-    domains). Shape parity with full detail is preserved so existing
-    parsers continue to work.
+    Omits the heavy nested blocks entirely (continent, country_flag,
+    country_flag_url, country_currency, abuse, domains) rather than nulling
+    them, so summary responses are genuinely smaller on the wire. Every omitted
+    field is Optional on IPDetails, so the projected dict stays valid against
+    the tool's auto-generated outputSchema (which is preserved by keeping the
+    ``-> list[IPDetails]`` return annotation). Callers needing these blocks
+    pass ``detail="full"``.
     """
-    return details.model_copy(update={field: None for field in _HEAVY_NESTED_FIELDS})
+    return details.model_dump(mode="json", exclude=set(_HEAVY_NESTED_FIELDS))
 
 
 async def _do_my_ip_lookup(
@@ -493,7 +561,12 @@ async def _do_batch_lookup(
     if cached_results:
         await ctx.info(f"Found {len(cached_results)} IPs in cache")
 
+    # Coarse progress for long batches: cache-resolved portion is done before
+    # any network call. No-op when the client supplied no progress token.
+    await ctx.report_progress(progress=len(cached_results), total=len(valid_ips))
+
     new_results: dict[str, IPDetails] = {}
+    failed: dict[str, str] = {}
     if ips_to_lookup:
         await ctx.info(f"Looking up {len(ips_to_lookup)} IP address(es)")
         try:
@@ -501,7 +574,7 @@ async def _do_batch_lookup(
                 result = await ipinfo_lookup(handler, ips_to_lookup[0])
                 new_results[ips_to_lookup[0]] = result
             else:
-                new_results = await ipinfo_batch_lookup(
+                new_results, failed = await ipinfo_batch_lookup(
                     handler, ips_to_lookup, raise_on_fail=False
                 )
             await cache.set_batch(new_results)
@@ -509,12 +582,43 @@ async def _do_batch_lookup(
             await ctx.error(f"IP lookup failed: {e}")
             _raise_from_upstream(e)
 
+    await ctx.report_progress(progress=len(valid_ips), total=len(valid_ips))
+
+    # Surface IPs that were valid and attempted but dropped by the upstream
+    # batch (partial failure). Without this an agent cannot distinguish "the
+    # API had no data / errored for this IP" from "this IP was never sent".
+    # Per-IP warnings are capped like the input-filter warnings.
+    if failed:
+        for ip, reason in list(failed.items())[:MAX_SKIP_WARNINGS]:
+            await ctx.warning(f"Lookup failed for {ip}: {reason}")
+        await ctx.error(
+            f"{len(failed)} of {len(ips_to_lookup)} attempted IP(s) failed "
+            "upstream and are absent from the result; compare returned "
+            "IPDetails.ip against your input to identify them."
+        )
+
     all_results = {**cached_results, **new_results}
     ordered_results = [all_results[ip] for ip in valid_ips if ip in all_results]
 
+    # If every attempted lookup failed (and nothing was cached), don't return
+    # an empty list that masks a systemic upstream failure — raise a temporary
+    # error so the agent retries instead of treating "" as "no data".
+    if not ordered_results and failed:
+        _raise_envelope(
+            "api_error",
+            f"All {len(failed)} attempted IP lookup(s) failed upstream.",
+            temporary=True,
+            field="ips",
+            repair={
+                "hint": "Retry; the upstream batch returned no usable results.",
+                "failed_count": len(failed),
+            },
+        )
+
     await ctx.info(
         f"Returning {len(ordered_results)} result(s) "
-        f"({len(skipped)} skipped, {len(cached_results)} cached)"
+        f"({len(skipped)} skipped, {len(cached_results)} cached, "
+        f"{len(failed)} failed upstream)"
     )
 
     return ordered_results
@@ -530,8 +634,12 @@ def _build_skipped_list(
 
 
 @mcp.tool(
-    annotations={"readOnlyHint": True, "openWorldHint": True},
-    meta={"introduced_in": "0.5.0"},
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    meta={"introduced_in": "0.5.0", "error_codes": _MY_IP_TOOL_ERROR_CODES},
 )
 async def ipinfo_lookup_my_ip(
     ctx: Context = CurrentContext(),
@@ -547,12 +655,16 @@ async def ipinfo_lookup_my_ip(
 
 
 @mcp.tool(
-    annotations={"readOnlyHint": True, "openWorldHint": True},
-    meta={"introduced_in": "0.5.0"},
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    meta={"introduced_in": "0.5.0", "error_codes": _LIST_TOOL_ERROR_CODES},
 )
 async def ipinfo_lookup_ips(
     ips: Annotated[
-        list[str],
+        list[IPString],
         Field(
             description="IPv4/IPv6 addresses to look up. Invalid or special-use IPs are filtered.",
             min_length=1,
@@ -564,33 +676,48 @@ async def ipinfo_lookup_ips(
         DetailLevel,
         Field(
             description=(
-                "'full' returns every IPDetails field; 'summary' nulls heavy "
-                "nested blocks (continent, country_flag*, country_currency, "
-                "abuse, domains) for batch token savings while preserving shape."
+                "'summary' (default) OMITS heavy nested blocks (continent, "
+                "country_flag*, country_currency, abuse, domains) for batch "
+                "token savings; 'full' returns every IPDetails field."
             ),
         ),
-    ] = "full",
+    ] = "summary",
     ctx: Context = CurrentContext(),
 ) -> list[IPDetails]:
     """Geolocate one or more IPs and return ISP/ASN details.
 
-    Returns a list of IPDetails in input order (after dedup and invalid-IP
-    filtering). Match results back to your input via the `ip` field. Capped
-    at 500,000 IPs per call (`too_many_ips` if exceeded). Higher plan tiers
-    populate more fields; see the server instructions for the
-    Lite/Core/Plus/Enterprise tier mapping. Errors raise ToolError with a
-    JSON-encoded envelope.
+    Returns a list in input order (after dedup and invalid-IP filtering); match
+    results back to your input via the `ip` field. IPs that fail upstream are
+    omitted and logged, and if every attempted lookup fails a temporary
+    `api_error` is raised. Defaults to `detail="summary"` (heavy nested blocks
+    omitted); pass `detail="full"` for every field. Capped at 500,000 IPs per
+    call (`too_many_ips` if exceeded). Higher plan tiers populate more fields;
+    see the server instructions for the Lite/Core/Plus/Enterprise tier mapping.
+    Errors raise ToolError with a JSON-encoded envelope.
     """
     handler, cache = _get_handler_and_cache(ctx)
     results = await _do_batch_lookup(handler, cache, ips, ctx)
     if detail == "summary":
-        return [_summarize_for_batch(r) for r in results]
+        # Project to token-lean dicts. The return annotation stays
+        # list[IPDetails] so the rich outputSchema is preserved; the omitted
+        # fields are all optional, so the projection is schema-valid. FastMCP
+        # serializes the raw return value, so returning dicts here is fine.
+        projected: list[Any] = [_project_summary(r) for r in results]
+        return projected
     return results
 
 
 @mcp.tool(
-    annotations={"readOnlyHint": True, "openWorldHint": True},
-    meta={"introduced_in": "0.5.0", "plan_required": "residential_proxy_addon"},
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    meta={
+        "introduced_in": "0.5.0",
+        "plan_required": "residential_proxy_addon",
+        "error_codes": _SINGLE_IP_TOOL_ERROR_CODES,
+    },
     tags={"enterprise"},
 )
 async def ipinfo_check_residential_proxy(
@@ -599,6 +726,7 @@ async def ipinfo_check_residential_proxy(
         Field(
             description="IPv4/IPv6 address to classify.",
             examples=["142.250.80.46"],
+            json_schema_extra={"format": "ip"},
         ),
     ],
     ctx: Context = CurrentContext(),
@@ -628,13 +756,17 @@ async def ipinfo_check_residential_proxy(
 
 
 @mcp.tool(
-    annotations={"readOnlyHint": True, "openWorldHint": True},
-    meta={"introduced_in": "0.5.0"},
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    meta={"introduced_in": "0.5.0", "error_codes": _LIST_TOOL_ERROR_CODES},
     timeout=MAP_TOOL_TIMEOUT_SECONDS,
 )
 async def ipinfo_generate_map_url(
     ips: Annotated[
-        list[str],
+        list[IPString],
         Field(
             description="IPv4/IPv6 addresses to plot. Invalid or special-use IPs are filtered.",
             min_length=1,
@@ -715,13 +847,24 @@ async def ipinfo_generate_map_url(
 
 
 @mcp.tool(
-    annotations={"readOnlyHint": True, "openWorldHint": True},
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
     tags={"deprecated"},
-    meta={"deprecated_since": "0.5.0", "replaced_by": "ipinfo_lookup_ips"},
+    meta={
+        "deprecated_since": "0.5.0",
+        "replaced_by": "ipinfo_lookup_ips",
+        "removed_in": "0.6.0",
+        # Forwards to the my_ip and batch paths; the list set is the superset of
+        # both (my_ip raises only upstream codes), so it covers either branch.
+        "error_codes": _LIST_TOOL_ERROR_CODES,
+    },
 )
 async def get_ip_details(
     ips: Annotated[
-        list[str] | None,
+        list[IPString] | None,
         Field(
             description=(
                 "[DEPRECATED in 0.5.0; use ipinfo_lookup_my_ip when ips is None, "
@@ -730,6 +873,8 @@ async def get_ip_details(
                 "more IPs. If not provided, analyzes the requesting client's IP "
                 "address."
             ),
+            min_length=1,
+            max_length=MAX_LOOKUP_IPS,
             examples=[["8.8.8.8"], ["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
         ),
     ] = None,
@@ -747,11 +892,17 @@ async def get_ip_details(
 
 
 @mcp.tool(
-    annotations={"readOnlyHint": True, "openWorldHint": True},
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
     tags={"deprecated"},
     meta={
         "deprecated_since": "0.5.0",
         "replaced_by": "ipinfo_check_residential_proxy",
+        "removed_in": "0.6.0",
+        "error_codes": _SINGLE_IP_TOOL_ERROR_CODES,
     },
 )
 async def get_residential_proxy_info(
@@ -773,16 +924,22 @@ async def get_residential_proxy_info(
 
 
 @mcp.tool(
-    annotations={"readOnlyHint": True, "openWorldHint": True},
+    annotations={
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
     tags={"deprecated"},
     meta={
         "deprecated_since": "0.5.0",
         "replaced_by": "ipinfo_generate_map_url",
+        "removed_in": "0.6.0",
+        "error_codes": _LIST_TOOL_ERROR_CODES,
     },
 )
 async def get_map_url(
     ips: Annotated[
-        list[str],
+        list[IPString],
         Field(
             description=(
                 "[DEPRECATED in 0.5.0; use ipinfo_generate_map_url. Removed in "

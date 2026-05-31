@@ -55,7 +55,10 @@ def mock_handler() -> AsyncMock:
         return create_mock_details(ip_address)
 
     async def mock_get_batch_details(ip_addresses, raise_on_fail=True):
-        return {ip: create_mock_details(ip) for ip in ip_addresses}
+        # Mirror the real SDK: freshly fetched IPs come back as raw dicts
+        # (getBatchDetails does result.update(json_resp)), not Details objects.
+        # Returning Details here would mask the hasattr(.all) silent-drop bug.
+        return {ip: create_mock_details(ip).all for ip in ip_addresses}
 
     async def mock_get_resproxy(ip_address):
         return create_mock_resproxy_details(ip_address)
@@ -115,6 +118,7 @@ def mock_context() -> MagicMock:
     ctx.debug = AsyncMock()
     ctx.warning = AsyncMock()
     ctx.error = AsyncMock()
+    ctx.report_progress = AsyncMock()
     return ctx
 
 

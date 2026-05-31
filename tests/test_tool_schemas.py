@@ -31,7 +31,15 @@ class TestNewToolSchemas:
         detail_schema = tool.parameters["properties"]["detail"]
         # Literal["summary","full"] should expose an enum constraint.
         assert set(detail_schema.get("enum", [])) == {"summary", "full"}
-        assert detail_schema.get("default") == "full"
+        # Token-lean default: summary (heavy nested blocks omitted).
+        assert detail_schema.get("default") == "summary"
+
+    async def test_lookup_ips_items_carry_ip_format_hint(self, registered_tools):
+        tool = registered_tools["ipinfo_lookup_ips"]
+        items = tool.parameters["properties"]["ips"]["items"]
+        # Soft, non-enforcing schema hint so agents see the expected shape.
+        assert items.get("format") == "ip"
+        assert items.get("type") == "string"
 
     async def test_generate_map_url_caps_array_length(self, registered_tools):
         tool = registered_tools["ipinfo_generate_map_url"]
@@ -62,6 +70,104 @@ class TestDeprecationMetadata:
         assert tool.meta is not None
         assert tool.meta.get("deprecated_since") == "0.5.0"
         assert tool.meta.get("replaced_by") == replacement
+
+    @pytest.mark.parametrize(
+        "name",
+        ["get_ip_details", "get_residential_proxy_info", "get_map_url"],
+    )
+    async def test_alias_carries_removal_version(self, registered_tools, name):
+        """removed_in is structured meta, not just prose, so clients can gate on it."""
+        tool = registered_tools[name]
+        assert tool.meta.get("removed_in") == "0.6.0"
+
+    async def test_deprecated_list_alias_keeps_array_constraints(
+        self, registered_tools
+    ):
+        """get_ip_details forwards to the batch path, so it carries the same cap."""
+        tool = registered_tools["get_ip_details"]
+        ips_schema = tool.parameters["properties"]["ips"]
+        # Optional[list] nests the array constraints inside an anyOf branch.
+        array_branch = next(b for b in ips_schema["anyOf"] if b.get("type") == "array")
+        assert array_branch["minItems"] == 1
+        assert array_branch["maxItems"] == 500_000
+
+
+class TestToolContract:
+    """Agent-facing contract metadata: error codes, idempotency hints."""
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("ipinfo_lookup_my_ip", {"auth_invalid", "timeout", "api_error"}),
+            (
+                "ipinfo_lookup_ips",
+                {
+                    "no_valid_ips",
+                    "too_many_ips",
+                    "quota_exceeded",
+                },
+            ),
+            (
+                "ipinfo_check_residential_proxy",
+                {"invalid_ip_address", "auth_insufficient_scope"},
+            ),
+            ("ipinfo_generate_map_url", {"no_valid_ips", "timeout"}),
+        ],
+    )
+    async def test_tools_advertise_error_codes(self, registered_tools, name, expected):
+        """Each tool's meta.error_codes lets agents see the branch set up front."""
+        tool = registered_tools[name]
+        codes = set(tool.meta.get("error_codes", []))
+        assert expected <= codes, f"{name} missing {expected - codes}"
+
+    async def test_my_ip_omits_input_only_error_codes(self, registered_tools):
+        """my_ip takes no input, so input-validation codes must not appear."""
+        codes = set(registered_tools["ipinfo_lookup_my_ip"].meta["error_codes"])
+        assert "invalid_ip_address" not in codes
+        assert "too_many_ips" not in codes
+
+    @pytest.mark.parametrize("name", ["ipinfo_lookup_ips", "ipinfo_generate_map_url"])
+    async def test_list_tools_omit_per_item_input_codes(self, registered_tools, name):
+        """List tools demote per-item invalid/special IPs to the skipped list
+        rather than raising, so those codes must not be advertised as raiseable."""
+        codes = set(registered_tools[name].meta["error_codes"])
+        assert "invalid_ip_address" not in codes
+        assert "special_ip_unsupported" not in codes
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("get_ip_details", {"no_valid_ips", "too_many_ips", "api_error"}),
+            (
+                "get_residential_proxy_info",
+                {"invalid_ip_address", "auth_insufficient_scope"},
+            ),
+            ("get_map_url", {"no_valid_ips", "timeout"}),
+        ],
+    )
+    async def test_deprecated_aliases_advertise_error_codes(
+        self, registered_tools, name, expected
+    ):
+        """Aliases forward to tools that raise structured errors, so their meta
+        must carry the same error_codes contract as the replacements."""
+        codes = set(registered_tools[name].meta.get("error_codes", []))
+        assert expected <= codes, f"{name} missing {expected - codes}"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "ipinfo_lookup_my_ip",
+            "ipinfo_lookup_ips",
+            "ipinfo_check_residential_proxy",
+            "ipinfo_generate_map_url",
+        ],
+    )
+    async def test_readonly_tools_are_idempotent(self, registered_tools, name):
+        """Read-only lookups are safe to retry; advertise idempotentHint."""
+        ann = registered_tools[name].annotations
+        assert ann is not None
+        assert ann.idempotentHint is True
+        assert ann.readOnlyHint is True
 
 
 class TestNewToolMetadata:

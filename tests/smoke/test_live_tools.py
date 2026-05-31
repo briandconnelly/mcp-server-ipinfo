@@ -4,7 +4,7 @@ Run with::
 
     IPINFO_API_TOKEN=<your-token> uv run pytest -m smoke --no-cov
 
-Without the token the tests skip cleanly. Each run makes ~6 live API calls
+Without the token the tests skip cleanly. Each run makes ~7 live API calls
 (the structured-error envelope test makes zero — pure boundary rejection).
 """
 
@@ -73,6 +73,25 @@ async def test_lookup_ips_single(client):
     assert results[0]["country"] == "US"
 
 
+async def test_lookup_ips_multiple_fresh(client):
+    """Fresh multi-IP lookup exercises the real batch path (getBatchDetails).
+
+    Regression guard for B0: the SDK returns fresh batch entries as raw dicts,
+    which a Details-only filter silently dropped — single-IP lookups (getDetails)
+    never caught it. Every requested public IP must come back.
+    """
+    ips = ["8.8.8.8", "1.1.1.1", "208.67.222.222"]
+    try:
+        r = await client.call_tool(
+            "ipinfo_lookup_ips", arguments={"ips": ips, "detail": "full"}
+        )
+    except ToolError as e:
+        _skip_if_transient(e)
+    results = r.structured_content["result"]
+    returned = {d["ip"] for d in results}
+    assert returned == set(ips), f"batch dropped IPs: missing {set(ips) - returned}"
+
+
 async def test_lookup_ips_summary_mode(client):
     try:
         r = await client.call_tool(
@@ -90,7 +109,7 @@ async def test_lookup_ips_summary_mode(client):
         "abuse",
         "domains",
     ):
-        assert d.get(heavy) is None, f"{heavy} should be nulled in summary mode"
+        assert heavy not in d, f"{heavy} should be omitted in summary mode"
     assert d.get("city"), "city should survive summary mode"
     assert d.get("country"), "country should survive summary mode"
 

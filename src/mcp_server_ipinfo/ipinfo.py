@@ -93,7 +93,7 @@ async def ipinfo_batch_lookup(
     handler: ipinfo.AsyncHandler,
     ips: list[str],
     raise_on_fail: bool = False,
-) -> dict[str, IPDetails]:
+) -> tuple[dict[str, IPDetails], dict[str, str]]:
     """
     Retrieve detailed information about multiple IP addresses.
 
@@ -103,23 +103,54 @@ async def ipinfo_batch_lookup(
         raise_on_fail: If False, return partial results on errors.
 
     Returns:
-        Dictionary mapping IP addresses to their IPDetails.
+        A ``(results, failed)`` tuple. ``results`` maps each successfully
+        resolved IP to its ``IPDetails``; ``failed`` maps each IP that could
+        not be resolved (or whose payload could not be parsed) to a short
+        reason string. Every input IP appears in exactly one of the two maps,
+        so callers can detect partial failures instead of silently receiving a
+        shorter list than they asked for.
 
     Raises:
         ipinfo.exceptions.RequestQuotaExceededError: If raise_on_fail and quota exceeded
         ipinfo.exceptions.RequestFailedError: If raise_on_fail and request fails
     """
-    results = await handler.getBatchDetails(
+    raw_results = await handler.getBatchDetails(
         ip_addresses=ips,
         raise_on_fail=raise_on_fail,
     )
 
     ts = _utc_timestamp()
-    return {
-        ip: IPDetails(**_flatten_nested_response(details.all), ts_retrieved=ts)
-        for ip, details in results.items()
-        if hasattr(details, "all")  # Skip failed lookups
-    }
+    results: dict[str, IPDetails] = {}
+    failed: dict[str, str] = {}
+
+    for ip, entry in raw_results.items():
+        # The SDK returns ``Details`` objects for cache/bogon hits but raw
+        # ``dict``s for freshly fetched IPs (getBatchDetails does
+        # ``result.update(json_resp)`` with the parsed JSON). Accept both
+        # shapes; anything else is treated as a per-IP failure.
+        if hasattr(entry, "all"):
+            payload = entry.all
+        elif isinstance(entry, dict):
+            payload = entry
+        else:
+            failed[ip] = f"unrecognized batch entry ({type(entry).__name__})"
+            continue
+
+        try:
+            results[ip] = IPDetails(
+                **_flatten_nested_response(payload), ts_retrieved=ts
+            )
+        except Exception as exc:  # malformed or error payload for this IP
+            failed[ip] = f"unparseable batch entry: {type(exc).__name__}"
+
+    # IPs the upstream dropped entirely (e.g. a failed sub-batch under
+    # raise_on_fail=False) never appear in raw_results at all; record them so
+    # the caller gets a complete accounting of the request.
+    for ip in ips:
+        if ip not in results and ip not in failed:
+            failed[ip] = "no result returned by upstream"
+
+    return results, failed
 
 
 async def ipinfo_resproxy_lookup(

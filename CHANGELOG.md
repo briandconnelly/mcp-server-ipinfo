@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This cycle hardens the agent-facing contract from a joint Claude + Codex
+audit. The headline fix is a correctness bug (B0): multi-IP lookups silently
+returned nothing on a cold cache.
+
+### Fixed
+- **Batch lookups silently dropped every freshly-fetched IP.** The ipinfo SDK
+  returns fresh batch entries as raw `dict`s (only cache/bogon hits are
+  `Details` objects), but `ipinfo_batch_lookup` kept entries only
+  `if hasattr(details, "all")` — so `ipinfo_lookup_ips` with 2+ uncached IPs
+  returned `[]`. The parser now accepts both shapes. (Single-IP lookups were
+  unaffected; the unit mock returned `Details` objects, masking it — the mock
+  now mirrors the real raw-dict shape, and a live multi-IP smoke test guards
+  the integration path.)
+- `ToolErrorEnvelope.request_id` is now populated with a server-generated
+  correlation id (uuid4 hex) on every raised error; previously always `null`.
+
+### Added
+- Partial batch failures are surfaced: IPs that fail upstream are logged
+  per-IP (capped) and counted in the summary instead of vanishing; if *every*
+  attempted lookup fails, a temporary `api_error` is raised rather than
+  returning an empty list that masks a systemic failure.
+- `serverInfo.version` now reports the package version (e.g. `0.5.0`) via
+  `FastMCP(version=...)`; it previously leaked the FastMCP library version,
+  defeating client-side capability fingerprinting and version gating.
+- `website_url` on the server for discoverability.
+- Per-tool `meta.error_codes` lists the stable codes each tool can raise, so
+  agents see the branch set from tool introspection without parsing the
+  server instructions.
+- `meta.removed_in = "0.6.0"` on the deprecated aliases (was prose-only).
+- `idempotentHint: true` annotation on all read-only tools.
+- A `format: "ip"` JSON Schema hint on IP-string inputs (non-enforcing; soft
+  runtime validation still returns structured envelopes for bad input).
+- Coarse progress reporting (`ctx.report_progress`) on the batch lookup path.
+- Schema-level `minItems`/`maxItems` on the deprecated `get_ip_details` alias,
+  matching `ipinfo_lookup_ips`.
+
+### Changed
+- **Breaking:** `ipinfo_lookup_ips` now defaults to `detail="summary"` (was
+  `"full"`). Lean-by-default for token efficiency; pass `detail="full"` for
+  every field.
+- **Breaking:** `detail="summary"` now **omits** the heavy nested blocks
+  (`continent`, `country_flag`, `country_flag_url`, `country_currency`,
+  `abuse`, `domains`) entirely rather than nulling them. The previous
+  shape-parity guarantee is dropped; callers using `record.get("continent")`
+  are unaffected, callers using `record["continent"]` should switch to `.get`.
+  The tool's output schema is unchanged (those fields remain optional).
+
 ## [0.5.0] - 2026-05-10
 
 This release reshapes the tool surface for better agent ergonomics: structured
