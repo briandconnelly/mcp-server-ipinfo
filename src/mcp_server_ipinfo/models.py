@@ -406,3 +406,44 @@ class MapResult(BaseModel):
 
     truncated: bool
     """True when ``skipped_ips`` was capped at 100 because more were filtered."""
+
+
+class GroupCount(BaseModel):
+    """A counted summary bucket for a group in ``SummaryResult``."""
+
+    key: str
+    """Group key, such as ``US``, ``AS15169 Google LLC``, or ``vpn``."""
+
+    count: int
+    """Number of mapped IPs in this bucket."""
+
+    percent: float
+    """Percentage of mapped IPs in this bucket, from 0 to 100."""
+
+
+class SummaryResult(BaseModel):
+    """Fixed-size aggregate summary for a batch of IP lookups."""
+
+    mapped_ip_count: int
+    """IPs that successfully looked up and contributed to the aggregate."""
+
+    skipped_count: int
+    """Inputs filtered before lookup, including sentinels, duplicates, and special-use IPs."""
+
+    failed_count: int
+    """Valid IPs attempted upstream but omitted from the aggregate due to lookup failure."""
+
+    by_country: list[GroupCount] | None = None
+    """Top country-code buckets when requested."""
+
+    by_continent: list[GroupCount] | None = None
+    """Top continent-code buckets when requested and available from the plan."""
+
+    by_asn: list[GroupCount] | None = None
+    """Top ASN/organization buckets when requested."""
+
+    by_privacy: list[GroupCount] | None = None
+    """Privacy-flag buckets when requested and available from the plan."""
+
+    truncated_groups: dict[str, int] = Field(default_factory=dict)
+    """Group name to total distinct bucket count when output was capped."""

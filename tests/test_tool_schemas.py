@@ -47,6 +47,31 @@ class TestNewToolSchemas:
         assert ips_schema["minItems"] == 1
         assert ips_schema["maxItems"] == 500_000
 
+    async def test_summarize_ips_caps_array_length(self, registered_tools):
+        tool = registered_tools["ipinfo_summarize_ips"]
+        ips_schema = tool.parameters["properties"]["ips"]
+        assert ips_schema["minItems"] == 1
+        assert ips_schema["maxItems"] == 500_000
+
+    async def test_summarize_ips_group_by_is_enum_array(self, registered_tools):
+        tool = registered_tools["ipinfo_summarize_ips"]
+        group_schema = tool.parameters["properties"]["group_by"]
+        assert group_schema["maxItems"] == 4
+        assert set(group_schema["items"].get("enum", [])) == {
+            "country",
+            "continent",
+            "asn",
+            "privacy",
+        }
+        assert group_schema.get("default") == ["country", "asn"]
+
+    async def test_summarize_ips_top_n_has_bounds(self, registered_tools):
+        tool = registered_tools["ipinfo_summarize_ips"]
+        top_n_schema = tool.parameters["properties"]["top_n"]
+        assert top_n_schema["minimum"] == 1
+        assert top_n_schema["maximum"] == 500
+        assert top_n_schema["default"] == 50
+
     async def test_my_ip_takes_no_args(self, registered_tools):
         tool = registered_tools["ipinfo_lookup_my_ip"]
         # Only the implicit Context parameter remains; no required args.
@@ -108,6 +133,14 @@ class TestToolContract:
                 },
             ),
             (
+                "ipinfo_summarize_ips",
+                {
+                    "no_valid_ips",
+                    "too_many_ips",
+                    "quota_exceeded",
+                },
+            ),
+            (
                 "ipinfo_check_residential_proxy",
                 {"invalid_ip_address", "auth_insufficient_scope"},
             ),
@@ -126,7 +159,10 @@ class TestToolContract:
         assert "invalid_ip_address" not in codes
         assert "too_many_ips" not in codes
 
-    @pytest.mark.parametrize("name", ["ipinfo_lookup_ips", "ipinfo_generate_map_url"])
+    @pytest.mark.parametrize(
+        "name",
+        ["ipinfo_lookup_ips", "ipinfo_summarize_ips", "ipinfo_generate_map_url"],
+    )
     async def test_list_tools_omit_per_item_input_codes(self, registered_tools, name):
         """List tools demote per-item invalid/special IPs to the skipped list
         rather than raising, so those codes must not be advertised as raiseable."""
@@ -158,6 +194,7 @@ class TestToolContract:
         [
             "ipinfo_lookup_my_ip",
             "ipinfo_lookup_ips",
+            "ipinfo_summarize_ips",
             "ipinfo_check_residential_proxy",
             "ipinfo_generate_map_url",
         ],
@@ -178,6 +215,7 @@ class TestNewToolMetadata:
         [
             "ipinfo_lookup_my_ip",
             "ipinfo_lookup_ips",
+            "ipinfo_summarize_ips",
             "ipinfo_check_residential_proxy",
             "ipinfo_generate_map_url",
         ],
@@ -185,7 +223,8 @@ class TestNewToolMetadata:
     async def test_introduced_in_meta(self, registered_tools, name):
         tool = registered_tools[name]
         assert tool.meta is not None
-        assert tool.meta.get("introduced_in") == "0.5.0"
+        expected = "0.6.0" if name == "ipinfo_summarize_ips" else "0.5.0"
+        assert tool.meta.get("introduced_in") == expected
 
     async def test_residential_proxy_marked_enterprise(self, registered_tools):
         tool = registered_tools["ipinfo_check_residential_proxy"]

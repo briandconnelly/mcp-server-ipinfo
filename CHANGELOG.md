@@ -24,6 +24,12 @@ returned nothing on a cold cache.
   correlation id (uuid4 hex) on every raised error; previously always `null`.
 
 ### Added
+- `ipinfo_summarize_ips(ips, group_by=("country", "asn"), top_n=50)` for
+  server-side aggregation of large IP batches into fixed-size counts and
+  percentages by country, continent, ASN, and privacy flags. The tool reuses
+  the batch lookup path, reports mapped/skipped/failed counts, caps each group
+  at `top_n`, and records true distinct group counts in `truncated_groups`
+  when capped. (#51)
 - Partial batch failures are surfaced: IPs that fail upstream are logged
   per-IP (capped) and counted in the summary instead of vanishing. If a
   multi-IP batch resolves *no* IPs at all, the failure is raised rather than
