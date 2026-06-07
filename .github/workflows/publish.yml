@@ -37,7 +37,13 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
-          files: dist/*
+          # Attach only the build artifacts, not everything in dist/. A bare
+          # `dist/*` also sweeps up the committed `dist/.gitignore`, which lands
+          # on the release as a stray `default.gitignore` asset. The .mcpb is
+          # uploaded separately by the dependent bundle job.
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
 
   # Build and attach the .mcpb bundle after the release exists. Called
   # explicitly (not via a release trigger) because a release created with
