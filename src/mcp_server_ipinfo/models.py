@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, computed_field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, computed_field
 from pydantic.networks import HttpUrl, IPvAnyAddress
 
 
@@ -27,6 +27,10 @@ class ToolErrorEnvelope(BaseModel):
     a ``ToolError`` so that the wire-level ``isError: true`` still applies
     while the message body remains parseable.
     """
+
+    # Server-authored model: constructed only from the fixed fields below, so
+    # the output schema is closed (``additionalProperties: false``).
+    model_config = ConfigDict(extra="forbid")
 
     code: ToolErrorCode
     """Stable symbolic identifier for branching on the error."""
@@ -229,6 +233,10 @@ class ResidentialProxyDetails(BaseModel):
     Available in: IPinfo Enterprise (with residential proxy add-on)
     """
 
+    # Open like IPDetails: parsed from the upstream ``details.all`` payload, so
+    # extras are ignored rather than forbidden for forward-compatibility.
+    model_config = ConfigDict(extra="ignore")
+
     ip: IPvAnyAddress
     """The IP address that was checked"""
 
@@ -273,6 +281,15 @@ class IPDetails(BaseModel):
     - IPinfo Enterprise: adds domains and abuse contacts; the residential-proxy
       add-on (separate purchase) powers ipinfo_check_residential_proxy
     """
+
+    # Intentionally OPEN (extra fields ignored, not forbidden): this model is
+    # parsed directly from the upstream IPInfo response (``details.all``), whose
+    # field set grows across plan tiers and over time. Forbidding extras would
+    # turn any new upstream field into a hard parse failure on a real lookup, so
+    # the output schema is deliberately not closed here (see §3 "intentional,
+    # documented contract" exception). Server-authored result models
+    # (MapResult, SummaryResult, etc.) ARE closed.
+    model_config = ConfigDict(extra="ignore")
 
     ip: IPvAnyAddress
     """The IP address (IPv4 or IPv6)"""
@@ -377,6 +394,8 @@ class IPDetails(BaseModel):
 class SkippedIP(BaseModel):
     """A single input IP that was filtered out before reaching the upstream API."""
 
+    model_config = ConfigDict(extra="forbid")
+
     ip: str
     """The original input string (preserved before normalization for traceability)."""
 
@@ -391,6 +410,8 @@ class MapResult(BaseModel):
     submitted IPs actually made the map, and which were filtered out (with
     reasons), without re-validating client-side.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     url: HttpUrl
     """URL of the interactive map on ipinfo.io."""
@@ -411,6 +432,8 @@ class MapResult(BaseModel):
 class GroupCount(BaseModel):
     """A counted summary bucket for a group in ``SummaryResult``."""
 
+    model_config = ConfigDict(extra="forbid")
+
     key: str
     """Group key, such as ``US``, ``AS15169 Google LLC``, or ``vpn``."""
 
@@ -423,6 +446,8 @@ class GroupCount(BaseModel):
 
 class SummaryResult(BaseModel):
     """Fixed-size aggregate summary for a batch of IP lookups."""
+
+    model_config = ConfigDict(extra="forbid")
 
     mapped_ip_count: int
     """IPs that successfully looked up and contributed to the aggregate."""
