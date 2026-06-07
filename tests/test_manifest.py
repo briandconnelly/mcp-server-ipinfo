@@ -23,6 +23,12 @@ gen_manifest = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gen_manifest)
 
 
+def _load_manifest() -> dict:
+    """Load the committed manifest, failing clearly if it is missing."""
+    assert MANIFEST.exists(), "manifest.json missing; run scripts/gen_manifest.py"
+    return json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+
 def test_manifest_in_sync():
     """Committed manifest.json byte-equals the generator output (regenerate and
     commit after bumping the version or changing tools)."""
@@ -40,14 +46,13 @@ async def test_manifest_tools_match_server():
     async with fastmcp.Client(mcp) as client:
         registered = {t.name for t in await client.list_tools()}
 
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    advertised = {t["name"] for t in manifest["tools"]}
+    advertised = {t["name"] for t in _load_manifest()["tools"]}
     assert advertised == registered
 
 
 def test_manifest_required_fields():
     """MCPB-required top-level fields are present and the server is a uv bundle."""
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest = _load_manifest()
     for field in (
         "manifest_version",
         "name",
@@ -74,5 +79,4 @@ def test_manifest_version_matches_package():
     """Manifest version tracks the packaged version."""
     from importlib.metadata import version
 
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert manifest["version"] == version("mcp-server-ipinfo")
+    assert _load_manifest()["version"] == version("mcp-server-ipinfo")

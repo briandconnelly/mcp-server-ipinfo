@@ -22,8 +22,6 @@ import sys
 import tomllib
 from pathlib import Path
 
-import fastmcp
-
 from mcp_server_ipinfo.server import mcp
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -37,12 +35,12 @@ KEYWORDS = ["mcp", "ipinfo", "geolocation", "ip", "asn", "vpn"]
 def _tools() -> list[dict[str, str]]:
     """Manifest ``tools`` entries, derived from the server's registered tools so
     the name/description pairs stay in lockstep with the live server. The
-    description is each tool's first line (the one-sentence summary)."""
-
-    async def _list() -> list[dict[str, str]]:
-        async with fastmcp.Client(mcp) as client:
-            tools = await client.list_tools()
-        return [
+    description is each tool's first line (the one-sentence summary). Sorted by
+    name so the generated manifest is byte-stable regardless of registration
+    order (the committed file is drift-guarded by byte equality)."""
+    tools = asyncio.run(mcp.list_tools())
+    return sorted(
+        (
             {
                 "name": tool.name,
                 "description": (tool.description or "")
@@ -51,9 +49,9 @@ def _tools() -> list[dict[str, str]]:
                 .strip(),
             }
             for tool in tools
-        ]
-
-    return asyncio.run(_list())
+        ),
+        key=lambda entry: entry["name"],
+    )
 
 
 def build_manifest() -> dict:
