@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- MCPB bundle packaging for one-click install in Claude Desktop. A `manifest.json`
+  (`server.type: "uv"`) is generated from `pyproject.toml` and the server's tools by
+  `scripts/gen_manifest.py` (drift-guarded by `tests/test_manifest.py`); the release
+  workflow packs a version-stamped `.mcpb` and attaches it to the GitHub release. The
+  token and cache settings are exposed as install-time `user_config`; leaving the token
+  blank runs the free Lite tier.
+
 ## [0.6.0] - 2026-05-31
 
 This cycle hardens the agent-facing contract from a joint Claude + Codex

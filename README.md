@@ -11,6 +11,12 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes 
 
 Sign up for a free IPInfo API token at <https://ipinfo.io/signup> if you don't have one. The server runs with no token (free Lite tier — country and ASN basics) but most fields require a token.
 
+### Claude Desktop (one-click bundle)
+
+Download the `.mcpb` bundle from the [latest release](https://github.com/briandconnelly/mcp-server-ipinfo/releases/latest) and open it to install in Claude Desktop. You can set your `IPINFO_API_TOKEN` (and optional cache tuning) in the install dialog; leave the token blank to run in the free Lite tier. The bundle launches the server with [`uv`](https://docs.astral.sh/uv/), so `uv` must be installed and on your system `PATH` (GUI apps don't inherit your shell's `PATH`).
+
+### Other MCP clients
+
 Most MCP clients accept the following values:
 
 | Field | Value |

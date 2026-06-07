@@ -7,11 +7,13 @@
 
 ## Releases
 
-Releases are automated by `.github/workflows/publish.yml`, which triggers on pushing a tag matching `v*`. The workflow runs the test suite, builds the package, publishes to PyPI via trusted publishing (OIDC — no API token needed), and creates the GitHub release with auto-generated notes and the built `dist/*` artifacts attached.
+Releases are automated by `.github/workflows/publish.yml`, which triggers on pushing a tag matching `v*`. The workflow runs the test suite, asserts the tag matches the `pyproject.toml` version, checks `manifest.json` is in sync, builds the package, publishes to PyPI via trusted publishing (OIDC — no API token needed), and creates the GitHub release with auto-generated notes and the built `dist/*` artifacts (wheel, sdist) attached. A dependent `bundle` job (reusable `.github/workflows/mcpb.yml`) then packs the MCPB bundle (`dist/mcp-server-ipinfo-<version>.mcpb`) for one-click Claude Desktop install and uploads it to the release.
+
+`manifest.json` is **generated** from `pyproject.toml` plus the server's registered tools by `scripts/gen_manifest.py` — do not hand-edit it. `tests/test_manifest.py` and the workflow both run `gen_manifest.py --check` to catch a stale committed manifest.
 
 To cut a release:
 
-1. Bump `version` in `pyproject.toml`, and fold the `CHANGELOG.md` `[Unreleased]` section into a new `[<version>] - <date>` heading (and update the compare links at the bottom).
+1. Bump `version` in `pyproject.toml`, regenerate the manifest with `uv run python scripts/gen_manifest.py`, and fold the `CHANGELOG.md` `[Unreleased]` section into a new `[<version>] - <date>` heading (and update the compare links at the bottom). The publish workflow asserts `tag == pyproject` and that the manifest is in sync, failing the release on a mismatch.
 2. Run the smoke tests (see below) before tagging — the workflow runs the default suite but **not** the smoke suite.
 3. Merge to `main`, then tag and push: `git tag v<version> && git push origin v<version>` (the `v` prefix matters — it's what the workflow triggers on).
 
