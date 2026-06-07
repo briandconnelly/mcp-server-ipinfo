@@ -1,0 +1,74 @@
+name: Build MCPB bundle
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to attach the bundle to (e.g. v0.6.0)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build and attach the bundle to"
+        required: true
+        type: string
+
+permissions:
+  contents: write # upload the .mcpb asset to the release
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }} # build the bundle from the tagged commit
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Sync project
+        run: uv sync --extra dev
+
+      - name: Verify manifest is in sync
+        run: uv run python scripts/gen_manifest.py --check
+
+      - name: Install mcpb CLI
+        run: npm install -g @anthropic-ai/mcpb@2.1.2 # pin for reproducible bundles
+
+      - name: Validate manifest
+        run: mcpb validate manifest.json
+
+      - name: Compute versioned bundle path
+        run: |
+          version="$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')"
+          echo "BUNDLE=dist/mcp-server-ipinfo-${version}.mcpb" >> "$GITHUB_ENV"
+
+      - name: Pack bundle
+        run: |
+          mkdir -p dist
+          mcpb pack . "$BUNDLE"
+
+      - name: Assert bundle excludes secrets and dev files
+        run: |
+          contents="$(unzip -Z1 "$BUNDLE")"
+          echo "$contents"
+          if echo "$contents" | grep -E -i \
+            '(^|/)(\.env$|\.git/|\.github/|\.venv/|tests/|scripts/|prek\.toml$|CLAUDE\.md$|AGENTS\.md$|__pycache__/|\.coverage$|\.pytest_cache/|\.ruff_cache/)'; then
+            echo "::error::Forbidden path found in .mcpb bundle"
+            exit 1
+          fi
+
+      - name: Upload bundle to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }} # via env to avoid shell injection from the input
+        run: gh release upload "$TAG" "$BUNDLE" --clobber
+
+      - name: Upload bundle as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mcp-server-ipinfo-mcpb
+          path: ${{ env.BUNDLE }}
