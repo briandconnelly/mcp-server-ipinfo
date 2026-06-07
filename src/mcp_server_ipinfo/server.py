@@ -1,3 +1,4 @@
+import hashlib
 import ipaddress
 import json
 import uuid
@@ -18,7 +19,7 @@ from ipinfo.error import APIError
 from ipinfo.exceptions import RequestQuotaExceededError, TimeoutExceededError
 from pydantic import Field
 
-from .cache import IPInfoCache
+from .cache import DEFAULT_MAX_SIZE, IPInfoCache
 from .ipinfo import (
     UPSTREAM_NO_RESULT_REASON,
     create_async_handler,
@@ -61,15 +62,32 @@ except PackageNotFoundError:  # pragma: no cover - editable tree without metadat
     __version__ = "0.0.0+unknown"
 
 
+# Agent-facing serverInfo identity. Carries a service prefix ("IPInfo") so it
+# disambiguates at a glance in a multiplexed client without colliding with a
+# generic name like "geolocation". The MCPB package/display names live in
+# manifest.json; this is the name agents see over the wire.
+SERVER_NAME = "IPInfo Geolocation"
+
+# Reverse-DNS namespace for this server's convention `_meta` extensions, so they
+# cannot collide with future native MCP `_meta` fields (per the agent-friendly
+# MCP convention). bconnelly.net -> net.bconnelly.
+CONTRACT_NS = "net.bconnelly.ipinfo/contract"
+
+
 # Create an MCP server
 mcp = FastMCP(
-    name="IP Address Geolocation and Internet Service Provider Lookup",
+    name=SERVER_NAME,
     version=__version__,
     website_url="https://github.com/briandconnelly/mcp-server-ipinfo",
     instructions="""
     Geolocate IPv4/IPv6 addresses via ipinfo.io: location, ISP, ASN, and
     (on paid plans) privacy/VPN/Tor/proxy flags, carrier, company, abuse
     contacts, hosted domains.
+
+    Machine-readable capability summary (negative scope, plan tiers, error-code
+    catalog, per-tool contract, and a surface `fingerprint` for change
+    detection) is the `ipinfo://capabilities` resource. Read it instead of
+    parsing this prose if your client surfaces MCP resources.
 
     Tools:
     - ipinfo_lookup_my_ip(): the calling client's own IP (no args).
@@ -82,7 +100,10 @@ mcp = FastMCP(
       them); if the batch resolves no IPs at all, the failure is raised rather
       than masked — auth_insufficient_scope when the upstream returned nothing
       (token tier likely lacks /batch access; look IPs up one at a time or
-      upgrade to Core+), otherwise a retryable api_error.
+      upgrade to Core+), otherwise a retryable api_error. Returns one record
+      per IP and is capped at 1,000 IPs (too_many_ips above that) — for larger
+      batches use ipinfo_summarize_ips (fixed-size aggregates) or
+      ipinfo_generate_map_url.
     - ipinfo_summarize_ips(ips, group_by=["country", "asn"]): batch lookup
       plus server-side aggregation into fixed-size counts/percentages, for
       large log-analysis tasks where per-IP records would waste context.
@@ -106,8 +127,14 @@ mcp = FastMCP(
 
     Cache (lookup tools only — not residential-proxy or map): in-memory,
     IPINFO_CACHE_TTL seconds (default 3600), max IPINFO_CACHE_SIZE entries
-    (default 4096), oldest evicted first. `ts_retrieved` on a cached record
+    (default 4096); when full, the oldest insertion/update is evicted first
+    (reads do not refresh an entry's age). `ts_retrieved` on a cached record
     is the original lookup time — compare against now for freshness.
+
+    Long-running behavior: the batch tools emit best-effort progress
+    notifications (a no-op unless your client supplied a progressToken). No
+    tool supports the MCP task lifecycle; treat every call as a single
+    request/response and rely on the per-tool timeouts instead.
 
     Transport: on stdio, ipinfo_lookup_my_ip resolves to this server's
     outbound IP, not the end user's. Use ipinfo_lookup_ips with an explicit
@@ -117,8 +144,10 @@ mcp = FastMCP(
     (auth_invalid, auth_insufficient_scope, quota_exceeded, timeout,
     api_error, invalid_ip_address, special_ip_unsupported, no_valid_ips,
     too_many_ips, unknown_error), a `temporary` flag, an optional
-    `retry_after_ms`, and a `repair` hint. Parse the message as JSON and
-    branch on `code`.
+    `retry_after_ms` (populated on rate-limit/429 responses that carry an
+    upstream Retry-After header), and a `repair` hint. Parse the message as
+    JSON and branch on `code`. The same code catalog is in the
+    `ipinfo://capabilities` resource.
     """,
     lifespan=app_lifespan,
 )
@@ -203,7 +232,41 @@ _SINGLE_IP_TOOL_ERROR_CODES = [
 # my_ip takes no input, so only upstream/auth codes apply.
 _MY_IP_TOOL_ERROR_CODES = list(_UPSTREAM_ERROR_CODES)
 
+
+def _contract_meta(
+    *,
+    introduced_in: str,
+    error_codes: list[str],
+    invalid_ip_behavior: str,
+    plan_required: str | None = None,
+) -> dict[str, Any]:
+    """Build a tool's namespaced convention ``_meta`` block (see ``CONTRACT_NS``).
+
+    All house-style contract metadata lives under one reverse-DNS key so it
+    cannot collide with future native MCP ``_meta`` fields. Agents read
+    ``tool.meta[CONTRACT_NS]`` for the branch set (``error_codes``), the version
+    marker (``introduced_in``), whether bad IPs are skipped per-item or raised
+    (``invalid_ip_behavior``: ``skip_per_item`` | ``raise`` | ``not_applicable``),
+    and any plan gating (``plan_required``).
+    """
+    contract: dict[str, Any] = {
+        "introduced_in": introduced_in,
+        "stability": "stable",
+        "error_codes": error_codes,
+        "invalid_ip_behavior": invalid_ip_behavior,
+    }
+    if plan_required is not None:
+        contract["plan_required"] = plan_required
+    return {CONTRACT_NS: contract}
+
+
 MAX_LOOKUP_IPS = 500_000
+# Per-record cap for ipinfo_lookup_ips specifically. Its response grows one
+# IPDetails record per resolved IP, so an unbounded batch would blow the
+# context window; the fixed-size ipinfo_summarize_ips and the single-URL
+# ipinfo_generate_map_url keep the full MAX_LOOKUP_IPS ceiling. Exceeding this
+# raises a structured too_many_ips that points the agent at those tools.
+MAX_DETAILED_LOOKUP_IPS = 1_000
 MAX_SUMMARY_GROUPS = 500
 DEFAULT_SUMMARY_TOP_N = 50
 
@@ -221,6 +284,10 @@ MAX_SKIP_WARNINGS = 100
 # tighter per-request timeout (DEFAULT_MAP_TIMEOUT_SECONDS).
 MAP_TOOL_TIMEOUT_SECONDS = 60.0
 SUMMARY_TOOL_TIMEOUT_SECONDS = 120.0
+# Framework guard on the per-record batch tool. With the 1,000-IP cap above,
+# the upstream /batch call is bounded, but a hung connection still needs a
+# ceiling so the tool returns a structured timeout rather than blocking.
+LOOKUP_TOOL_TIMEOUT_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -258,6 +325,25 @@ def _raise_envelope(
         request_id=uuid.uuid4().hex,
     )
     raise ToolError(envelope.model_dump_json())
+
+
+def _parse_retry_after(value: str | None) -> int | None:
+    """Parse an HTTP ``Retry-After`` header into milliseconds, or ``None``.
+
+    Handles the ``delta-seconds`` form (e.g. ``"120"``), which is what IPInfo
+    emits on a 429. The HTTP-date form is not parsed (returns ``None``) because
+    the upstream does not use it; populating ``retry_after_ms`` only from a
+    value we can interpret keeps the field honest rather than guessing.
+    """
+    if not value:
+        return None
+    try:
+        seconds = int(value.strip())
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return seconds * 1000
 
 
 def _envelope_from_upstream(
@@ -363,7 +449,7 @@ def _envelope_from_upstream(
                 "quota_exceeded",
                 "IPInfo rate limit exceeded.",
                 True,
-                None,
+                _parse_retry_after(exc.response.headers.get("Retry-After")),
                 {"hint": "Wait for the rate-limit window to reset."},
             )
         if 500 <= status < 600:
@@ -830,8 +916,13 @@ def _summarize_ip_details(
         "readOnlyHint": True,
         "openWorldHint": True,
         "idempotentHint": True,
+        "title": "Look Up My IP",
     },
-    meta={"introduced_in": "0.5.0", "error_codes": _MY_IP_TOOL_ERROR_CODES},
+    meta=_contract_meta(
+        introduced_in="0.5.0",
+        error_codes=_MY_IP_TOOL_ERROR_CODES,
+        invalid_ip_behavior="not_applicable",
+    ),
 )
 async def ipinfo_lookup_my_ip(
     ctx: Context = CurrentContext(),
@@ -851,8 +942,14 @@ async def ipinfo_lookup_my_ip(
         "readOnlyHint": True,
         "openWorldHint": True,
         "idempotentHint": True,
+        "title": "Look Up IPs",
     },
-    meta={"introduced_in": "0.5.0", "error_codes": _LIST_TOOL_ERROR_CODES},
+    meta=_contract_meta(
+        introduced_in="0.5.0",
+        error_codes=_LIST_TOOL_ERROR_CODES,
+        invalid_ip_behavior="skip_per_item",
+    ),
+    timeout=LOOKUP_TOOL_TIMEOUT_SECONDS,
 )
 async def ipinfo_lookup_ips(
     ips: Annotated[
@@ -860,7 +957,7 @@ async def ipinfo_lookup_ips(
         Field(
             description="IPv4/IPv6 addresses to look up. Invalid or special-use IPs are filtered.",
             min_length=1,
-            max_length=MAX_LOOKUP_IPS,
+            max_length=MAX_DETAILED_LOOKUP_IPS,
             examples=[["8.8.8.8"], ["8.8.8.8", "1.1.1.1", "208.67.222.222"]],
         ),
     ],
@@ -885,12 +982,41 @@ async def ipinfo_lookup_ips(
     returned nothing (token tier likely lacks `/batch` access; look IPs up one
     at a time or upgrade to Core+), otherwise a retryable `api_error`. Defaults
     to `detail="summary"` (heavy nested blocks
-    omitted); pass `detail="full"` for every field. Capped at 500,000 IPs per
-    call (`too_many_ips` if exceeded). Higher plan tiers populate more fields;
-    see the server instructions for the Lite/Core/Plus/Enterprise tier mapping.
+    omitted); pass `detail="full"` for every field. Capped at 1,000 IPs per
+    call (`too_many_ips` above that): this tool returns one record per IP, so
+    for larger batches use `ipinfo_summarize_ips` (fixed-size aggregates) or
+    `ipinfo_generate_map_url`. Higher plan tiers populate more fields; see the
+    server instructions for the Lite/Core/Plus/Enterprise tier mapping. For
+    VPN/Tor/open-proxy/hosting detection read the `privacy` flags on each
+    record; for residential-proxy exit-node classification use the separate
+    `ipinfo_check_residential_proxy` tool. Typically completes in seconds;
+    bounded by a 120s tool timeout that surfaces as a `timeout` envelope.
     Errors raise ToolError with a JSON-encoded envelope.
     """
     handler, cache = _get_handler_and_cache(ctx)
+    # Per-record cap (schema also enforces max_length; this covers callers that
+    # bypass FastMCP validation). The aggregate/map tools keep the larger
+    # MAX_LOOKUP_IPS ceiling, so the repair hint routes oversized batches there.
+    if len(ips) > MAX_DETAILED_LOOKUP_IPS:
+        _raise_envelope(
+            "too_many_ips",
+            f"Too many IPs ({len(ips):,}) for per-record lookup. "
+            f"Maximum is {MAX_DETAILED_LOOKUP_IPS:,}.",
+            temporary=False,
+            field="ips",
+            value=len(ips),
+            repair={
+                "limit": MAX_DETAILED_LOOKUP_IPS,
+                "received": len(ips),
+                "hint": (
+                    "ipinfo_lookup_ips returns one record per IP and is capped "
+                    f"at {MAX_DETAILED_LOOKUP_IPS:,}. For larger batches call "
+                    "ipinfo_summarize_ips for fixed-size aggregates, or "
+                    "ipinfo_generate_map_url to plot them."
+                ),
+                "alternatives": ["ipinfo_summarize_ips", "ipinfo_generate_map_url"],
+            },
+        )
     results = await _do_batch_lookup(handler, cache, ips, ctx)
     if detail == "summary":
         # Project to token-lean dicts. The return annotation stays
@@ -907,8 +1033,13 @@ async def ipinfo_lookup_ips(
         "readOnlyHint": True,
         "openWorldHint": True,
         "idempotentHint": True,
+        "title": "Summarize IPs",
     },
-    meta={"introduced_in": "0.6.0", "error_codes": _LIST_TOOL_ERROR_CODES},
+    meta=_contract_meta(
+        introduced_in="0.6.0",
+        error_codes=_LIST_TOOL_ERROR_CODES,
+        invalid_ip_behavior="skip_per_item",
+    ),
     timeout=SUMMARY_TOOL_TIMEOUT_SECONDS,
 )
 async def ipinfo_summarize_ips(
@@ -971,12 +1102,14 @@ async def ipinfo_summarize_ips(
         "readOnlyHint": True,
         "openWorldHint": True,
         "idempotentHint": True,
+        "title": "Check Residential Proxy",
     },
-    meta={
-        "introduced_in": "0.5.0",
-        "plan_required": "residential_proxy_addon",
-        "error_codes": _SINGLE_IP_TOOL_ERROR_CODES,
-    },
+    meta=_contract_meta(
+        introduced_in="0.5.0",
+        error_codes=_SINGLE_IP_TOOL_ERROR_CODES,
+        invalid_ip_behavior="raise",
+        plan_required="residential_proxy_addon",
+    ),
     tags={"enterprise"},
 )
 async def ipinfo_check_residential_proxy(
@@ -995,7 +1128,10 @@ async def ipinfo_check_residential_proxy(
     Returns ResidentialProxyDetails with `is_residential_proxy` (the canonical
     yes/no), and — when true — `service`, `last_seen` (YYYY-MM-DD), and
     `percent_days_seen` over a 7-day window. Useful for fraud, bot, and
-    ad-fraud detection. Requires IPINFO_API_TOKEN with the Enterprise
+    ad-fraud detection. This is distinct from the general `privacy` flags on
+    `ipinfo_lookup_ips` (VPN / Tor / open web proxy / hosting): use this tool
+    only to detect residential-proxy networks that route traffic through real
+    residential IPs. Requires IPINFO_API_TOKEN with the Enterprise
     residential-proxy add-on; absence surfaces as `auth_insufficient_scope`
     (distinct from `auth_invalid` for a missing/wrong token).
     """
@@ -1019,8 +1155,13 @@ async def ipinfo_check_residential_proxy(
         "readOnlyHint": True,
         "openWorldHint": True,
         "idempotentHint": True,
+        "title": "Generate IP Map URL",
     },
-    meta={"introduced_in": "0.5.0", "error_codes": _LIST_TOOL_ERROR_CODES},
+    meta=_contract_meta(
+        introduced_in="0.5.0",
+        error_codes=_LIST_TOOL_ERROR_CODES,
+        invalid_ip_behavior="skip_per_item",
+    ),
     timeout=MAP_TOOL_TIMEOUT_SECONDS,
 )
 async def ipinfo_generate_map_url(
@@ -1097,3 +1238,164 @@ async def ipinfo_generate_map_url(
             "truncated": truncated,
         }
     )
+
+
+# --- Capability summary resource (agent discovery surface) -------------------
+#
+# A structured, fingerprinted capability summary exposed as an MCP resource so
+# clients that drop the advisory `instructions` field still get negative scope,
+# plan tiers, the error-code catalog, and the per-tool contract. The fingerprint
+# lets a cached client detect surface changes without re-walking every tool.
+
+# What this server does NOT do. Stated as data (not only prose) so an agent can
+# rule the server in or out without a failed call.
+NEGATIVE_SCOPE: tuple[str, ...] = (
+    "DNS / hostname resolution",
+    "CIDR or BGP / prefix lookups",
+    "historical or time-series data",
+    "private / loopback / multicast / link-local / reserved IPs "
+    "(filtered at the boundary as special_ip_unsupported)",
+    "deanonymizing users behind VPN / proxy / Tor (results reflect the exit point)",
+    "malice / threat / abuse scoring",
+)
+
+# IPINFO_API_TOKEN plan tiers and the fields each unlocks.
+PLAN_TIERS: dict[str, str] = {
+    "none": "country, country_code, continent, ASN basics",
+    "core": "full geolocation, ASN details, privacy/VPN/proxy/Tor/hosting flags",
+    "plus": "carrier, company",
+    "enterprise": "domains, abuse contacts",
+    "residential_proxy_addon": (
+        "ipinfo_check_residential_proxy (separate purchase on top of Enterprise)"
+    ),
+}
+
+# Every stable error `code` an agent may branch on, with a one-line meaning.
+# Keys must stay in sync with the ToolErrorCode literal in models.py.
+ERROR_CODE_CATALOG: dict[str, str] = {
+    "invalid_ip_address": "Input was not a parseable IPv4/IPv6 address.",
+    "special_ip_unsupported": (
+        "IP is private/loopback/multicast/link-local/reserved; not geolocatable."
+    ),
+    "no_valid_ips": "Every input IP was filtered out; nothing to look up.",
+    "too_many_ips": "Batch exceeded the tool's input cap.",
+    "auth_invalid": "IPINFO_API_TOKEN missing or rejected (HTTP 401).",
+    "auth_insufficient_scope": (
+        "Token tier/add-on lacks access to this capability "
+        "(HTTP 403, or an empty /batch response on a Lite token)."
+    ),
+    "quota_exceeded": "Request quota or rate limit exhausted (HTTP 429).",
+    "timeout": "Upstream request timed out.",
+    "api_error": "IPInfo returned a server error (HTTP 5xx) or an unusable payload.",
+    "unknown_error": "Unclassified failure; see message and exception_type.",
+}
+
+
+async def _surface_records() -> list[dict[str, Any]]:
+    """Project the live tool registry into stable, sorted per-tool contract records."""
+    tools = await mcp.list_tools()
+    records: list[dict[str, Any]] = []
+    for tool in sorted(tools, key=lambda t: t.name):
+        params = tool.parameters or {}
+        properties = params.get("properties") or {}
+        contract = (tool.meta or {}).get(CONTRACT_NS, {})
+        ann = tool.annotations
+        records.append(
+            {
+                "name": tool.name,
+                "title": getattr(ann, "title", None),
+                "input_fields": sorted(properties.keys()),
+                "required": sorted(params.get("required") or []),
+                "introduced_in": contract.get("introduced_in"),
+                "stability": contract.get("stability"),
+                "error_codes": sorted(contract.get("error_codes", [])),
+                "invalid_ip_behavior": contract.get("invalid_ip_behavior"),
+                "plan_required": contract.get("plan_required"),
+                "annotations": {
+                    "readOnlyHint": getattr(ann, "readOnlyHint", None),
+                    "idempotentHint": getattr(ann, "idempotentHint", None),
+                    "openWorldHint": getattr(ann, "openWorldHint", None),
+                },
+            }
+        )
+    return records
+
+
+def _compute_fingerprint(records: list[dict[str, Any]]) -> str:
+    """Deterministic hash over the agent-visible surface.
+
+    Covers tool names, input fields, required args, annotations, error codes,
+    and introduced_in, plus the negative scope and the error-code catalog keys.
+    It deliberately EXCLUDES the package version, so a release that does not
+    change the surface keeps the same fingerprint — a client can observe
+    "version moved but fingerprint identical" and skip re-walking discovery.
+    Pure function of the surface (no time or randomness), so it is stable across
+    runs and machines.
+    """
+    canonical = json.dumps(
+        {
+            "tools": records,
+            "negative_scope": list(NEGATIVE_SCOPE),
+            "error_codes": sorted(ERROR_CODE_CATALOG),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+@mcp.resource(
+    "ipinfo://capabilities",
+    name="capabilities",
+    description=(
+        "Structured capability summary: surface fingerprint, negative scope, "
+        "plan tiers, error-code catalog, cache and long-running behavior, and "
+        "the per-tool contract. Read this to plan calls without parsing the "
+        "server instructions prose."
+    ),
+    mime_type="application/json",
+    meta={CONTRACT_NS: {"introduced_in": "0.7.0", "stability": "stable"}},
+)
+async def capabilities() -> str:
+    """Serve the machine-readable capability summary as a JSON document."""
+    records = await _surface_records()
+    payload = {
+        "server": {"name": SERVER_NAME, "version": __version__},
+        "fingerprint": _compute_fingerprint(records),
+        "fingerprint_covers": [
+            "tool names",
+            "tool input fields",
+            "required args",
+            "tool annotations",
+            "error codes",
+            "negative scope",
+        ],
+        "transport_note": (
+            "On stdio, ipinfo_lookup_my_ip resolves the server's outbound IP, "
+            "not the end user's. Pass an explicit IP to ipinfo_lookup_ips when "
+            "the caller already has one."
+        ),
+        "negative_scope": list(NEGATIVE_SCOPE),
+        "plan_tiers": PLAN_TIERS,
+        "error_code_catalog": ERROR_CODE_CATALOG,
+        "cache": {
+            "applies_to": [
+                "ipinfo_lookup_my_ip",
+                "ipinfo_lookup_ips",
+                "ipinfo_summarize_ips",
+            ],
+            "ttl_seconds": {"env": "IPINFO_CACHE_TTL", "default": 3600},
+            "max_entries": {"env": "IPINFO_CACHE_SIZE", "default": DEFAULT_MAX_SIZE},
+            "eviction": "oldest insertion/update first; reads do not refresh age",
+        },
+        "long_running": {
+            "progress": "best_effort; no-op unless the client sends a progressToken",
+            "task_support": "none",
+        },
+        "limits": {
+            "max_detailed_lookup_ips": MAX_DETAILED_LOOKUP_IPS,
+            "max_lookup_ips": MAX_LOOKUP_IPS,
+        },
+        "tools": records,
+    }
+    return json.dumps(payload, indent=2)

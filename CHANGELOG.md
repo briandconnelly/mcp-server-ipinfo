@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-07
+
+A second joint Claude + Codex agent-friendliness pass, plus MCPB bundle
+packaging. Focus: discoverability for clients that ignore the `instructions`
+field, and token-bounded per-record responses.
+
 ### Added
 - MCPB bundle packaging for one-click install in Claude Desktop. A `manifest.json`
   (`server.type: "uv"`) is generated from `pyproject.toml` and the server's tools by
@@ -14,6 +20,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow packs a version-stamped `.mcpb` and attaches it to the GitHub release. The
   token and cache settings are exposed as install-time `user_config`; leaving the token
   blank runs the free Lite tier.
+- `ipinfo://capabilities` resource: a structured, JSON capability summary carrying a
+  surface `fingerprint` (sha256 over tool names, input fields, annotations, error
+  codes, and negative scope — version-independent so clients can detect real surface
+  changes), the negative scope, plan tiers, the full error-code catalog, cache and
+  long-running behavior, and the per-tool contract. Gives clients that drop the
+  advisory `instructions` field a machine-readable discovery surface.
+- Human-facing `title` on every tool (e.g. "Look Up IPs", "Check Residential Proxy")
+  for clients with a capability picker.
+- `retry_after_ms` is now populated on rate-limit (HTTP 429) failures that carry an
+  upstream `Retry-After` header (previously always absent).
+
+### Changed
+- **Breaking (discovery):** convention tool metadata (`introduced_in`, `error_codes`,
+  `plan_required`, plus a new `invalid_ip_behavior`) moved under the namespaced
+  `_meta` key `net.bconnelly.ipinfo/contract` so it cannot collide with future native
+  MCP `_meta` fields. Read `tool.meta["net.bconnelly.ipinfo/contract"]`.
+- **Breaking (behavior):** `ipinfo_lookup_ips` is now capped at 1,000 IPs per call
+  (was 500,000); it returns one record per IP, so larger batches raise `too_many_ips`
+  with a repair hint routing to `ipinfo_summarize_ips` (fixed-size aggregates) or
+  `ipinfo_generate_map_url`. Both of those keep the 500,000-IP ceiling. `lookup_ips`
+  also gained a 120s tool timeout.
+- serverInfo name is now `IPInfo Geolocation` (was the longer
+  "IP Address Geolocation and Internet Service Provider Lookup"), giving a concise
+  service-prefixed identity for multiplexed clients.
+- Server-authored result models (`MapResult`, `SummaryResult`, `GroupCount`,
+  `SkippedIP`, the error envelope) now emit closed (`additionalProperties: false`)
+  output schemas; `IPDetails`/`ResidentialProxyDetails` stay open by design since they
+  are parsed from the evolving upstream payload.
+- Tool descriptions disambiguate the general `privacy` flags on `ipinfo_lookup_ips`
+  (VPN/Tor/open-proxy/hosting) from `ipinfo_check_residential_proxy`, and the cache
+  eviction wording is clarified ("oldest insertion/update first; reads do not refresh
+  age").
 
 ## [0.6.0] - 2026-05-31
 
@@ -242,7 +280,8 @@ The previous tool names remain as forwarding aliases scheduled for removal in
 - Response caching with 1-hour TTL
 - Pydantic models for API responses
 
-[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.3.0...v0.4.0

@@ -17,6 +17,13 @@ async def registered_tools():
     return {tool.name: tool for tool in tools}
 
 
+def _contract(tool) -> dict:
+    """Extract a tool's namespaced convention contract block from its meta."""
+    from mcp_server_ipinfo.server import CONTRACT_NS
+
+    return (tool.meta or {}).get(CONTRACT_NS, {})
+
+
 class TestNewToolSchemas:
     """Constraints that agents need to see in the schema."""
 
@@ -24,7 +31,9 @@ class TestNewToolSchemas:
         tool = registered_tools["ipinfo_lookup_ips"]
         ips_schema = tool.parameters["properties"]["ips"]
         assert ips_schema["minItems"] == 1
-        assert ips_schema["maxItems"] == 500_000
+        # Per-record tool is capped tighter than the aggregate/map tools so a
+        # large batch cannot blow the context window.
+        assert ips_schema["maxItems"] == 1_000
 
     async def test_lookup_ips_detail_is_enum(self, registered_tools):
         tool = registered_tools["ipinfo_lookup_ips"]
@@ -125,14 +134,14 @@ class TestToolContract:
         ],
     )
     async def test_tools_advertise_error_codes(self, registered_tools, name, expected):
-        """Each tool's meta.error_codes lets agents see the branch set up front."""
+        """Each tool's contract error_codes lets agents see the branch set up front."""
         tool = registered_tools[name]
-        codes = set(tool.meta.get("error_codes", []))
+        codes = set(_contract(tool).get("error_codes", []))
         assert expected <= codes, f"{name} missing {expected - codes}"
 
     async def test_my_ip_omits_input_only_error_codes(self, registered_tools):
         """my_ip takes no input, so input-validation codes must not appear."""
-        codes = set(registered_tools["ipinfo_lookup_my_ip"].meta["error_codes"])
+        codes = set(_contract(registered_tools["ipinfo_lookup_my_ip"])["error_codes"])
         assert "invalid_ip_address" not in codes
         assert "too_many_ips" not in codes
 
@@ -143,7 +152,7 @@ class TestToolContract:
     async def test_list_tools_omit_per_item_input_codes(self, registered_tools, name):
         """List tools demote per-item invalid/special IPs to the skipped list
         rather than raising, so those codes must not be advertised as raiseable."""
-        codes = set(registered_tools[name].meta["error_codes"])
+        codes = set(_contract(registered_tools[name])["error_codes"])
         assert "invalid_ip_address" not in codes
         assert "special_ip_unsupported" not in codes
 
@@ -182,9 +191,37 @@ class TestNewToolMetadata:
         tool = registered_tools[name]
         assert tool.meta is not None
         expected = "0.6.0" if name == "ipinfo_summarize_ips" else "0.5.0"
-        assert tool.meta.get("introduced_in") == expected
+        assert _contract(tool).get("introduced_in") == expected
 
     async def test_residential_proxy_marked_enterprise(self, registered_tools):
         tool = registered_tools["ipinfo_check_residential_proxy"]
         assert "enterprise" in (tool.tags or set())
-        assert tool.meta.get("plan_required") == "residential_proxy_addon"
+        assert _contract(tool).get("plan_required") == "residential_proxy_addon"
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("ipinfo_lookup_my_ip", "not_applicable"),
+            ("ipinfo_lookup_ips", "skip_per_item"),
+            ("ipinfo_summarize_ips", "skip_per_item"),
+            ("ipinfo_generate_map_url", "skip_per_item"),
+            ("ipinfo_check_residential_proxy", "raise"),
+        ],
+    )
+    async def test_invalid_ip_behavior_declared(self, registered_tools, name, expected):
+        """Agents can see whether bad IPs are skipped per-item or raised."""
+        assert _contract(registered_tools[name]).get("invalid_ip_behavior") == expected
+
+    @pytest.mark.parametrize(
+        ("name", "title"),
+        [
+            ("ipinfo_lookup_my_ip", "Look Up My IP"),
+            ("ipinfo_lookup_ips", "Look Up IPs"),
+            ("ipinfo_summarize_ips", "Summarize IPs"),
+            ("ipinfo_check_residential_proxy", "Check Residential Proxy"),
+            ("ipinfo_generate_map_url", "Generate IP Map URL"),
+        ],
+    )
+    async def test_tools_carry_display_title(self, registered_tools, name, title):
+        """Each tool exposes a human-facing title for capability pickers."""
+        assert registered_tools[name].annotations.title == title
