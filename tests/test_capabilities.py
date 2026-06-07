@@ -42,7 +42,13 @@ class TestCapabilitiesResource:
 
     async def test_carries_fingerprint(self):
         payload = await _read_capabilities()
-        assert payload["fingerprint"].startswith("sha256:")
+        fingerprint = payload["fingerprint"]
+        assert fingerprint.startswith("sha256:")
+        # The label must match the value: a full 64-char SHA-256 hex digest,
+        # not a truncated one (PR #73 review).
+        digest = fingerprint.removeprefix("sha256:")
+        assert len(digest) == 64
+        assert all(c in "0123456789abcdef" for c in digest)
 
     async def test_negative_scope_present(self):
         payload = await _read_capabilities()

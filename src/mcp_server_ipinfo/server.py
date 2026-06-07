@@ -1331,6 +1331,12 @@ def _compute_fingerprint(records: list[dict[str, Any]]) -> str:
     "version moved but fingerprint identical" and skip re-walking discovery.
     Pure function of the surface (no time or randomness), so it is stable across
     runs and machines.
+
+    Returns the full SHA-256 hex digest with a ``sha256:`` prefix so the label
+    matches the value. Clients treat it as an opaque equality token (the
+    canonicalization is server-internal and not independently recomputable), so
+    a shorter digest would suffice for change-detection — but emitting the full
+    digest keeps the ``sha256:`` prefix honest at negligible cost.
     """
     canonical = json.dumps(
         {
@@ -1341,7 +1347,7 @@ def _compute_fingerprint(records: list[dict[str, Any]]) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @mcp.resource(
