@@ -16,7 +16,7 @@ jobs:
       contents: write # create the GitHub release
       id-token: write # OIDC trusted publishing; no API token needed
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --extra dev
       - run: uv run pytest
