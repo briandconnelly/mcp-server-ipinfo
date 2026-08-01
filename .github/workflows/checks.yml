@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --extra dev
-      - uses: j178/prek-action@v2
+      - uses: j178/prek-action@v2.0.6
 
   test:
     name: Tests
