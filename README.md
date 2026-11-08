@@ -4,6 +4,9 @@
 [![CI](https://github.com/briandconnelly/mcp-server-ipinfo/actions/workflows/checks.yml/badge.svg)](https://github.com/briandconnelly/mcp-server-ipinfo/actions/workflows/checks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> [!WARNING]
+> **This project is deprecated and no longer maintained.** IPinfo now provides an official MCP server at <https://mcp.ipinfo.io>. Please use that instead. This repository is archived, and the final release is v0.7.1.
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the [ipinfo.io](https://ipinfo.io) API to AI agents. Geolocate IPv4 and IPv6 addresses, identify ISPs and ASNs, detect VPN/proxy/Tor exit nodes, and generate interactive maps for sets of IPs.
 
 

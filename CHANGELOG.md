@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-08
+
+Final release. This project is deprecated in favor of IPinfo's official MCP
+server at <https://mcp.ipinfo.io>.
+
+### Deprecated
+- The whole project. The README, PyPI metadata, and server `instructions` now
+  point users and agents to the official server. No further development is planned.
+
+### Removed
+- Dependabot configuration.
+
 ## [0.7.0] - 2026-06-07
 
 A second joint Claude + Codex agent-friendliness pass, plus MCPB bundle
@@ -280,7 +292,8 @@ The previous tool names remain as forwarding aliases scheduled for removal in
 - Response caching with 1-hour TTL
 - Pydantic models for API responses
 
-[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/briandconnelly/mcp-server-ipinfo/compare/v0.4.0...v0.5.0

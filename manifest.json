@@ -2,8 +2,8 @@
   "manifest_version": "0.4",
   "name": "mcp-server-ipinfo",
   "display_name": "IP Geolocation (IPInfo)",
-  "version": "0.7.0",
-  "description": "IP Geolocation Server for MCP",
+  "version": "0.7.1",
+  "description": "IP Geolocation Server for MCP (deprecated: use the official IPinfo MCP server at https://mcp.ipinfo.io)",
   "author": {
     "name": "Brian Connelly",
     "email": "bdc@bconnelly.net"
