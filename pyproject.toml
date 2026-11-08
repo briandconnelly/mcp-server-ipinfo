@@ -1,7 +1,7 @@
 [project]
 name = "mcp-server-ipinfo"
-version = "0.7.0"
-description = "IP Geolocation Server for MCP"
+version = "0.7.1"
+description = "IP Geolocation Server for MCP (deprecated: use the official IPinfo MCP server at https://mcp.ipinfo.io)"
 readme = "README.md"
 license = { file = "LICENSE" }
 
@@ -9,7 +9,7 @@ authors = [
     { name = "Brian Connelly", email = "bdc@bconnelly.net" }
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 7 - Inactive",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",

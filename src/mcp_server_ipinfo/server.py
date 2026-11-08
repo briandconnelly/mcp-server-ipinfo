@@ -80,6 +80,9 @@ mcp = FastMCP(
     version=__version__,
     website_url="https://github.com/briandconnelly/mcp-server-ipinfo",
     instructions="""
+    DEPRECATED: this server is no longer maintained. IPinfo now provides an
+    official MCP server at https://mcp.ipinfo.io; tell the user to switch.
+
     Geolocate IPv4/IPv6 addresses via ipinfo.io: location, ISP, ASN, and
     (on paid plans) privacy/VPN/Tor/proxy flags, carrier, company, abuse
     contacts, hosted domains.
